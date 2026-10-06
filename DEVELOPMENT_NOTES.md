@@ -19,7 +19,9 @@ This project is a Computer Network Security (CNS) Coursework Enhancement Project
                ↓
     Normalized Packet Data
                ↓
-        Terminal Output
+    Security Detection Engine (SynScanDetector)
+               ↓
+   Security Alerts / Output
 ```
 
 ---
@@ -38,18 +40,19 @@ This project is a Computer Network Security (CNS) Coursework Enhancement Project
 - ARP protocol parsing (`protocol = "ARP"`, `ip_version = None`, Source IP `psrc`, Destination IP `pdst`)
 - Numeric port enforcement (`int(sport)`, `int(dport)`) preventing Scapy service name strings
 - Non-IP / Unsupported packet handling (safe fallback with `None` fields)
-- Automated unit test suite (`test_packet_parser.py` testing 6 protocol combinations)
+- Automated parser unit test suite (`test_packet_parser.py` testing 6 protocol combinations)
 - Refactored `test_capture.py` live sniffer callback to render normalized output dictionary
-- Added graceful exit handling on `KeyboardInterrupt` (`Ctrl+C`) during live packet capture
+- Graceful exit handling on `KeyboardInterrupt` (`Ctrl+C`) during live packet capture
+- Live capture pipeline integration verification (`DEVELOPMENT_NOTES.md`)
+- TCP SYN Port Scan Detector module (`detection_engine.py` / `SynScanDetector`)
+- Detection engine test suite (`test_detection_engine.py` covering 5 test scenarios)
 
 ### In Progress
-- Security analysis engine & signature detection planning
+- Live capture integration with Security Detection Engine
 
 ### Not Yet Implemented
-- Security detection engine (anomaly & signature-based detection)
-- Suspicious port & flag combination detector (e.g., SYN scans, NULL scans, XMAS scans)
-- Real-time alert generation system
-- Persistent packet logging / PCAP storage
+- Additional attack signature detectors (e.g., NULL scan, XMAS scan, UDP sweep)
+- Real-time alert logging / PCAP storage
 - User interface / Dashboard visualization
 
 ---
@@ -292,6 +295,84 @@ Status: SUCCESS
 ### Git Commit
 Commit: eec6272b5dacb5f36b9f8244cc6eb45f74603da9
 Message: docs: add live capture pipeline verification entry
+
+---
+
+## 2026-10-06 — Implement TCP SYN Port Scan Detector
+
+### Objective
+Implement `SynScanDetector` class in `detection_engine.py` to identify potential TCP SYN port scanning attempts by tracking unique destination ports targeted by a source IP within a sliding time window.
+
+### Why We Did It
+Port scanning (specifically TCP SYN stealth scanning) is a primary reconnaissance technique used by attackers to discover open network services. Detecting high-frequency connection attempts across multiple ports from a single source address enables early threat warning.
+
+### What Was Changed
+- Created `detection_engine.py`:
+  - Defined `SynScanDetector` class with configurable `time_window` (default 10s) and `port_threshold` (default 5 ports).
+  - Implemented `analyze(packet)` method accepting normalized packet dictionaries.
+  - Added filter logic requiring `protocol == "TCP"` and `tcp_flags == "S"`.
+  - Added tracking tuple `(source_ip, destination_ip)` mapping to recorded timestamp-port pairs.
+  - Added sliding time window cleanup (`timestamp - entry[0] <= self.time_window`).
+  - Added unique port set calculation (`set(entry[1] for entry in tracker[connection])`).
+  - Generated security alert dictionary when unique ports reach or exceed threshold.
+- Created `test_detection_engine.py`:
+  - Added 5 test scenarios: Normal TCP Traffic, Repeated Same Port, TCP SYN Port Scan (5 unique ports in 5s), Ports Outside Time Window, and Different Destinations.
+
+### Files Changed
+- `detection_engine.py`
+- `test_detection_engine.py`
+- `DEVELOPMENT_NOTES.md`
+
+### Detection Logic
+```python
+# Track per (source_ip, destination_ip) pair
+connection = (source_ip, destination_ip)
+self.tracker[connection].append((timestamp, destination_port))
+
+# Time window filter
+self.tracker[connection] = [
+    entry for entry in self.tracker[connection]
+    if timestamp - entry[0] <= self.time_window
+]
+
+# Unique destination port count check
+unique_ports = set(entry[1] for entry in self.tracker[connection])
+if len(unique_ports) >= self.port_threshold:
+    return {
+        "type": "Possible TCP SYN Port Scan",
+        "source_ip": source_ip,
+        "destination_ip": destination_ip,
+        "ports_scanned": sorted(unique_ports),
+        "window": self.time_window
+    }
+```
+
+### Testing Performed
+Executed test suite:
+```bash
+.venv/bin/python test_detection_engine.py
+```
+
+Observed test outputs:
+1. **Normal TCP Traffic**: No alert generated.
+2. **Repeated Same Port** (Port 443 5x): No alert generated (only 1 unique port).
+3. **TCP SYN Port Scan** (Ports 22, 23, 80, 443, 8080 within 5s):
+   Alert generated: `🚨 SECURITY ALERT {'type': 'Possible TCP SYN Port Scan', 'source_ip': '192.168.1.50', 'destination_ip': '192.168.1.10', 'ports_scanned': [22, 23, 80, 443, 8080], 'window': 10}`
+4. **Ports Outside Time Window** (4 ports at t=1..4, 5th port at t=15): No alert generated (window pruned old entries).
+5. **Different Destinations**: No alert generated (tracked independently per destination IP).
+
+### Result
+Status: SUCCESS
+
+### Limitations / Known Issues
+- Currently targets TCP SYN (`"S"`) packets only (does not track NULL, FIN, or XMAS scans yet).
+- In-memory state tracking does not persist state across process restarts.
+
+### Git Commit
+Commit: 475d9cb519479ed26db26356cd15ff12374141a0
+Message: feat: add tcp syn scan detection
+
+
 
 
 

@@ -7,6 +7,7 @@ def packet_callback(packet):
 
     print("--------------------------------")
     print(f"Time       : {data['timestamp']}")
+    print(f"IP Version : {data['ip_version']}")
     print(f"Source     : {data['source_ip']}")
     print(f"Destination: {data['destination_ip']}")
     print(f"Protocol   : {data['protocol']}")
@@ -14,6 +15,7 @@ def packet_callback(packet):
     print(f"Dst Port   : {data['destination_port']}")
     print(f"Length     : {data['length']}")
     print(f"TCP Flags  : {data['tcp_flags']}")
+
 
 
 print("Starting packet capture...")

@@ -31,14 +31,17 @@ This project is a Computer Network Security (CNS) Coursework Enhancement Project
 - Live packet capture mechanism using Scapy `sniff()` callback
 - macOS BPF permission handling & environment configuration
 - Packet normalization parser (`packet_parser.py`)
-- IPv4 packet header parsing (Source IP, Destination IP, Protocol ID)
-- TCP header parsing (Source Port, Destination Port, TCP Flags)
-- UDP header parsing (Source Port, Destination Port - code implemented)
-- Basic packet length calculation (`len(packet)`)
+- IPv4 header parsing (`ip_version = 4`, Source IP, Destination IP, Protocol)
+- IPv6 header parsing (`ip_version = 6`, Source IP, Destination IP, Protocol)
+- TCP transport header parsing (Source Port, Destination Port, TCP Flags)
+- UDP transport header parsing (Source Port, Destination Port, `tcp_flags = None`)
+- ARP protocol parsing (`protocol = "ARP"`, `ip_version = None`, Source IP `psrc`, Destination IP `pdst`)
+- Numeric port enforcement (`int(sport)`, `int(dport)`) preventing Scapy service name strings
+- Non-IP / Unsupported packet handling (safe fallback with `None` fields)
+- Automated unit test suite (`test_packet_parser.py` testing 6 protocol combinations)
 
 ### In Progress
-- UDP traffic live capture validation
-- Non-IP protocol identification and handling (e.g., ARP, Link-Layer frames)
+- Security analysis engine & signature detection planning
 
 ### Not Yet Implemented
 - Security detection engine (anomaly & signature-based detection)
@@ -51,70 +54,76 @@ This project is a Computer Network Security (CNS) Coursework Enhancement Project
 
 # Change Log
 
-## 2026-10-06 — Initial Packet Sniffer & Packet Parser Implementation
+## 2026-10-06 — Add IPv6, UDP, ARP Parsing & IP Version Field Support
 
 ### Objective
-Establish the core live packet capture pipeline and basic packet header parser capable of extracting normalized fields (IPs, Ports, Protocols, Length, TCP Flags) from captured network traffic.
+Expand `packet_parser.py` to support IPv6 (TCP/UDP), IPv4 (TCP/UDP), ARP, and non-IP packets, adding an explicit `ip_version` normalized field, and enforcing numeric port extraction.
 
 ### Why We Did It
-Packet sniffing is the foundational requirement for network security monitoring. Before anomaly detection or threat analysis can occur, raw link-layer network packets must be captured from the interface and parsed into structured, normalized Python data structures.
+Diagnostic network capture verified that real-world network traffic contains significant IPv6 traffic, UDP datagrams (e.g., DNS, QUIC), and local ARP broadcasting. Furthermore, Scapy by default translates common port numbers (such as 443) into service strings (`https`), whereas downstream security detectors require strict integer port representations.
 
 ### What Was Changed
-- Created `packet_parser.py`:
-  - Implemented `parse_packet(packet)` function.
-  - Extracted packet timestamp (`packet.time`) and overall packet length (`len(packet)`).
-  - Added IPv4 layer check (`IP in packet`) to extract `src` IP, `dst` IP, and IP `proto`.
-  - Added TCP layer check (`TCP in packet`) to extract `sport`, `dport`, and stringified `flags`.
-  - Added UDP layer check (`UDP in packet`) to extract `sport` and `dport`.
-  - Returned structured data dictionary.
-- Created `test_capture.py`:
-  - Imported `sniff` from `scapy.all` and `parse_packet` from `packet_parser`.
-  - Implemented `packet_callback` function to receive captured packets and display normalized output fields.
-  - Invoked `sniff(prn=packet_callback)` for continuous live capture.
+- Updated `packet_parser.py`:
+  - Added imports for `IPv6` and `ARP` from `scapy.all`.
+  - Added `ip_version` key to normalized dictionary (`4` for IPv4, `6` for IPv6, `None` for non-IP/ARP).
+  - Added `IPv6` layer extraction (`ip_version = 6`, `src`, `dst`, `nh`).
+  - Added `ARP` layer extraction (`protocol = "ARP"`, `psrc`, `pdst`, `ip_version = None`).
+  - Enforced `int(tcp_layer.sport)` and `int(tcp_layer.dport)` for TCP packets.
+  - Enforced `int(udp_layer.sport)` and `int(udp_layer.dport)` for UDP packets with `tcp_flags = None`.
+  - Ensured safe fallback returning `None` fields for non-IP / unsupported link-layer frames without crashing.
+- Updated `test_capture.py`:
+  - Added `IP Version` output line to display normalized output format.
+- Created `test_packet_parser.py`:
+  - Implemented unit tests covering IPv4+TCP, IPv4+UDP, IPv6+TCP, IPv6+UDP, ARP, and raw Ethernet frames.
 
 ### Files Changed
 - `packet_parser.py`
 - `test_capture.py`
+- `test_packet_parser.py`
+- `DEVELOPMENT_NOTES.md`
 
 ### Technical Implementation
-Scapy inspects packet layer headers. `IP in packet`, `TCP in packet`, and `UDP in packet` are evaluated sequentially. Extracted header attributes are stored into a standard Python dictionary:
+The updated `parse_packet(packet)` evaluates network layer presence using Scapy layer checks (`IP in packet`, `IPv6 in packet`, `ARP in packet`). Transport layer parsing (`TCP in packet`, `UDP in packet`) executes independently to populate ports and flags:
 
 ```python
 data = {
     "timestamp": packet.time,
-    "source_ip": ip_layer.src,
-    "destination_ip": ip_layer.dst,
-    "protocol": "TCP" / "UDP" / ip_layer.proto,
-    "source_port": layer.sport,
-    "destination_port": layer.dport,
+    "ip_version": 4 | 6 | None,
+    "source_ip": ip_layer.src / psrc / None,
+    "destination_ip": ip_layer.dst / pdst / None,
+    "protocol": "TCP" | "UDP" | "ARP" | proto_id | None,
+    "source_port": int(sport) | None,
+    "destination_port": int(dport) | None,
     "length": len(packet),
-    "tcp_flags": str(tcp_layer.flags)
+    "tcp_flags": str(flags) | None
 }
 ```
 
-This decouples lower-level Scapy packet structures from downstream analysis modules.
-
 ### Testing Performed
-Manual live packet capture test was executed via terminal.
-Command run:
+Automated unit test execution:
 ```bash
-sudo .venv/bin/python test_capture.py
+.venv/bin/python -m unittest test_packet_parser.py
 ```
-Observed behavior:
-- Live network interfaces captured active TCP packets (HTTPS, HTTP, local socket traffic).
-- Source and Destination IP addresses parsed correctly.
-- Source and Destination TCP ports parsed correctly.
-- TCP flags (e.g., `PA`, `A`, `S`, `FA`) were formatted and printed accurately.
-- Packet length values were extracted successfully.
+Observed results:
+- 6/6 unit tests passed in 0.001s (`OK`).
+- IPv4 TCP: `ip_version=4`, `protocol="TCP"`, ports `54321`/`443` (ints), flags `"S"`.
+- IPv4 UDP: `ip_version=4`, `protocol="UDP"`, ports `5353`/`53` (ints), `tcp_flags=None`.
+- IPv6 TCP: `ip_version=6`, `protocol="TCP"`, ports `40000`/`80` (ints), flags `"PA"`.
+- IPv6 UDP: `ip_version=6`, `protocol="UDP"`, ports `546`/`547` (ints), `tcp_flags=None`.
+- ARP: `ip_version=None`, `protocol="ARP"`, `source_ip` & `destination_ip` parsed from `psrc`/`pdst`, ports `None`.
+- Unsupported Ether: `ip_version=None`, all layer fields `None`, valid `length`.
+
+Diagnostic capture live traffic observation confirmed IPv6 UDP (port 443 numeric) and IPv6 TCP traffic previously.
 
 ### Result
-Status: SUCCESS (for TCP & IP parsing baseline)
+Status: SUCCESS
 
 ### Limitations / Known Issues
-- UDP packet parsing code exists in `packet_parser.py` but has not been verified with live UDP traffic yet.
-- Packets lacking an IP layer (e.g. ARP, EAPOL, raw Ethernet frames) yield `None` for IP and protocol fields.
-- Non-IPv4 protocols (e.g., IPv6) are not yet handled in the parser logic.
+- ICMP / ICMPv6 packets are assigned protocol IDs or default numbers but do not yet have specific ICMP type/code field parsing.
+- VLAN tagged frames (802.1Q) are not yet explicitly unpacked before IP layer inspection.
 
 ### Git Commit
-Commit: 6fe5f8583624c9af5c84bfa685a3cc1cd9376411
-Message: feat: add initial packet sniffer implementation
+Commit: 110b81af857ac3d1308ab800d3d2ac3d1c55e8aa
+Message: feat: add IPv6 UDP and ARP packet parsing
+
+

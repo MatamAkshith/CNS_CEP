@@ -6,7 +6,7 @@ This project is a Computer Network Security (CNS) Coursework Enhancement Project
 
 ---
 
-## Current Architecture
+### Current Architecture
 
 ```
        Network Interface
@@ -19,7 +19,11 @@ This project is a Computer Network Security (CNS) Coursework Enhancement Project
                ↓
     Normalized Packet Data
                ↓
-    Security Detection Engine (SynScanDetector)
+ ┌─────────────┴─────────────┐
+ ↓                           ↓
+SynScanDetector     SynFloodDetector
+(Port Scan)          (Volumetric Flood)
+ └─────────────┬─────────────┘
                ↓
    Security Alerts / Output
 ```
@@ -46,17 +50,21 @@ This project is a Computer Network Security (CNS) Coursework Enhancement Project
 - Live capture pipeline integration verification (`DEVELOPMENT_NOTES.md`)
 - TCP SYN Port Scan Detector module (`detection_engine.py` / `SynScanDetector`)
 - Detection engine test suite (`test_detection_engine.py` covering 5 test scenarios)
-
 - Integrated `SynScanDetector` into live capture callback (`test_capture.py`)
 - Controlled integration test suite (`test_live_detection.py`) passing synthetic Scapy SYN packets through `packet_callback()`
+- TCP SYN Flood Detector module (`syn_flood_detector.py` / `SynFloodDetector`)
+- SYN Flood test suite (`test_syn_flood_detector.py` covering 5 test scenarios)
+- SYN Flood live capture integration test (`test_syn_flood_integration.py` passing 20 SYN packets to port 443)
+- Integrated dual detection engines (`SynScanDetector` + `SynFloodDetector`) into `test_capture.py`
 
 ### In Progress
-- Additional attack detection signatures and alerting options
+- Additional signature detectors and persistence / logging engine
 
 ### Not Yet Implemented
 - Additional attack signature detectors (e.g., NULL scan, XMAS scan, UDP sweep)
 - Real-time alert logging / PCAP storage
 - User interface / Dashboard visualization
+isualization
 
 
 ---
@@ -443,6 +451,85 @@ Status: SUCCESS
 ### Git Commit
 Commit: 9fc88c4a42cc1d0592d3ca3f0a1a209729aa30f5
 Message: feat: integrate syn scan detection with live capture
+
+---
+
+## 2026-10-06 — TCP SYN Flood Detection
+
+### Objective
+Implement `SynFloodDetector` in `syn_flood_detector.py` to identify volumetric Denial of Service (DoS) attempts where an attacker floods a target with high-frequency TCP SYN connection requests from a source IP address within a short time window.
+
+### Detection Rule & Threshold
+- **Protocol Rule**: Inspects TCP packets where `tcp_flags == "S"` (initial SYN requests). Ignores non-SYN TCP (e.g. ACK, SYN-ACK) and non-TCP traffic.
+- **Tracking Key**: Tracks total SYN packet count independently per `source_ip`.
+- **Time Window**: 5-second sliding time window (`timestamp - packet_time <= 5.0`).
+- **Threshold**: 20 SYN packets within the 5-second window.
+- **Alert Payload**:
+  `{'type': 'Possible TCP SYN Flood', 'source_ip': source_ip, 'syn_count': syn_count, 'window': 5}`
+
+### Distinction from SYN Port Scan Detection
+- **TCP SYN Port Scan (`SynScanDetector`)**: Tracks unique target destination ports per `(source_ip, destination_ip)` pair (e.g. 5 unique ports targeted within 10s). Designed to detect host reconnaissance across different services.
+- **TCP SYN Flood (`SynFloodDetector`)**: Tracks overall SYN packet volume per `source_ip` regardless of destination port (e.g. 20 SYN packets to port 443 within 5s). Designed to detect volumetric connection exhaustion attacks.
+
+### What Was Changed
+- Created `syn_flood_detector.py`:
+  - Defined `SynFloodDetector` class with default `time_window=5` and `syn_threshold=20`.
+  - Implemented `analyze(packet)` maintaining timestamp list per `source_ip` with 5-second sliding window cleanup.
+- Created `test_syn_flood_detector.py`:
+  - Added 5 unit test cases: Normal TCP Traffic (ACK), Below SYN Threshold (19 SYNs), TCP SYN Flood (20 SYNs in 3.8s -> alert generated), SYNs Outside Time Window (20 SYNs spaced 6s apart -> no alert), and Non-SYN Traffic (ACK, SYN-ACK, UDP).
+- Created `test_syn_flood_integration.py`:
+  - Built integration test passing 20 synthetic Scapy SYN packets targeting port 443 through `test_capture.py`'s `packet_callback()`.
+- Updated `test_capture.py`:
+  - Instantiated `flood_detector = SynFloodDetector()` and invoked `flood_detector.analyze(parsed_packet)` inside `packet_callback()` alongside `SynScanDetector`.
+
+### Files Changed
+- `syn_flood_detector.py`
+- `test_syn_flood_detector.py`
+- `test_syn_flood_integration.py`
+- `test_capture.py`
+- `DEVELOPMENT_NOTES.md`
+
+### Testing Performed & Results
+1. **Unit Test Suite Execution**:
+   ```bash
+   .venv/bin/python test_syn_flood_detector.py
+   ```
+   **Results**:
+   - Normal TCP Traffic (ACK): No alert.
+   - Below SYN Threshold (19 SYNs): No alert.
+   - TCP SYN Flood (20 SYNs): 🚨 **Security Alert Generated**:
+     `{'type': 'Possible TCP SYN Flood', 'source_ip': '192.168.1.50', 'syn_count': 20, 'window': 5}`
+   - SYNs Outside Time Window (6s spacing): No alert.
+   - Non-SYN Traffic (ACK, SYN-ACK, UDP): No alert.
+
+2. **Integration Test Execution**:
+   ```bash
+   .venv/bin/python test_syn_flood_integration.py
+   ```
+   **Results**:
+   - 20 synthetic SYN packets targeting port 443 were processed through `packet_callback()`.
+   - On the 20th packet, `Possible TCP SYN Flood` alert was generated.
+   - **Zero SYN Scan False Positives**: No `Possible TCP SYN Port Scan` alert was generated because all 20 packets targeted a single destination port (443).
+
+3. **Regression Testing**:
+   ```bash
+   .venv/bin/python test_detection_engine.py
+   .venv/bin/python -m unittest test_packet_parser.py
+   ```
+   **Results**: All detection engine and parser unit tests passed cleanly (`OK`).
+
+### Result
+Status: SUCCESS
+
+### Limitations
+- The SYN flood integration test used constructed Scapy packets passed directly through `packet_callback()` in `test_syn_flood_integration.py`, NOT an actual live network flooding attack against the network interface.
+- In-memory tracker resets state on process restart.
+
+### Git Commit
+Commit: 15b9d45889812485a6be7535efec808cc7242780
+Message: feat: add tcp syn flood detection
+
+
 
 
 

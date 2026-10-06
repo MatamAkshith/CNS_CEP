@@ -1,8 +1,10 @@
 from detection_engine import SynScanDetector
+from syn_flood_detector import SynFloodDetector
 from scapy.all import sniff
 from packet_parser import parse_packet
 
 detector = SynScanDetector()
+flood_detector = SynFloodDetector()
 
 def packet_callback(packet):
 
@@ -13,6 +15,13 @@ def packet_callback(packet):
     if alert:
         print("\n🚨 SECURITY ALERT")
         print(alert)
+
+    flood_alert = flood_detector.analyze(parsed_packet)
+
+    if flood_alert:
+        print("\n🚨 SECURITY ALERT")
+        print(flood_alert)
+    
 
     print("\n==============================")
     print(f"Timestamp: {parsed_packet['timestamp']}")

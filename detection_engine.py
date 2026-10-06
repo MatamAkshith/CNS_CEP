@@ -1,3 +1,5 @@
+from syn_flood_detector import SynFloodDetector
+
 class SynScanDetector:
 
     def __init__(self, time_window=10, port_threshold=5):
@@ -64,3 +66,23 @@ class SynScanDetector:
             }
 
         return None
+
+class DetectionEngine:
+
+    def __init__(self):
+        self.detectors = [
+            SynScanDetector(),
+            SynFloodDetector(),
+        ]
+
+    def analyze(self, packet):
+
+        alerts = []
+
+        for detector in self.detectors:
+            alert = detector.analyze(packet)
+
+            if alert:
+                alerts.append(alert)
+
+        return alerts

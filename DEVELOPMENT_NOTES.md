@@ -19,13 +19,16 @@ This project is a Computer Network Security (CNS) Coursework Enhancement Project
                ↓
     Normalized Packet Data
                ↓
- ┌─────────────┴─────────────┐
- ↓                           ↓
-SynScanDetector     SynFloodDetector
-(Port Scan)          (Volumetric Flood)
- └─────────────┬─────────────┘
+        DetectionEngine
+    ┌──────────┴──────────┐
+    ↓                     ↓
+SynScanDetector   SynFloodDetector
+(Port Scan)        (Volumetric Flood)
+    └──────────┬──────────┘
                ↓
-   Security Alerts / Output
+     List of Security Alerts
+               ↓
+     Terminal Display Output
 ```
 
 ---
@@ -55,16 +58,17 @@ SynScanDetector     SynFloodDetector
 - TCP SYN Flood Detector module (`syn_flood_detector.py` / `SynFloodDetector`)
 - SYN Flood test suite (`test_syn_flood_detector.py` covering 5 test scenarios)
 - SYN Flood live capture integration test (`test_syn_flood_integration.py` passing 20 SYN packets to port 443)
-- Integrated dual detection engines (`SynScanDetector` + `SynFloodDetector`) into `test_capture.py`
+- Unified Detection Engine (`detection_engine.py` / `DetectionEngine` class registering `SynScanDetector` & `SynFloodDetector`)
+- Updated `test_capture.py` to route normalized packets strictly through `DetectionEngine`
+- Unified engine test suite (`test_detection_engine_unified.py` testing both SYN scan and SYN flood detection paths)
 
 ### In Progress
-- Additional signature detectors and persistence / logging engine
+- Phase 8 — Alert Management Engine
 
 ### Not Yet Implemented
-- Additional attack signature detectors (e.g., NULL scan, XMAS scan, UDP sweep)
 - Real-time alert logging / PCAP storage
 - User interface / Dashboard visualization
-isualization
+
 
 
 ---
@@ -526,8 +530,82 @@ Status: SUCCESS
 - In-memory tracker resets state on process restart.
 
 ### Git Commit
-Commit: 15b9d45889812485a6be7535efec808cc7242780
+Commit: 010cb106c35b02f03b2eb10bab6ba509c3a9e740
 Message: feat: add tcp syn flood detection
+
+---
+
+## 2026-10-06 — Unified Detection Engine
+
+### Objective
+Establish a centralized `DetectionEngine` class in `detection_engine.py` that aggregates and executes all security threat detectors (`SynScanDetector` and `SynFloodDetector`) through a single unified interface.
+
+### Architectural Rationale
+Previously, `test_capture.py` directly instantiated and invoked individual detector classes (`SynScanDetector()` and `SynFloodDetector()`). Centralizing detection inside `DetectionEngine`:
+1. **Decouples Capture from Detection**: The packet capture callback only interacts with `DetectionEngine.analyze(packet)`, keeping capture logic completely independent of specific detector signatures.
+2. **Standardized Alert Aggregation**: `DetectionEngine.analyze(packet)` iterates through all registered detectors, collects any generated non-None alerts into a list `alerts = []`, and returns the list (or an empty list if no threats were detected).
+3. **Extensibility**: Future threat detectors (e.g. NULL scan, XMAS scan, UDP sweep) can be registered inside `DetectionEngine` without modifying `test_capture.py` or the packet capture loop.
+
+### DetectionEngine Responsibilities
+- Registers detector instances in `self.detectors = [SynScanDetector(), SynFloodDetector()]`.
+- Accepts normalized packet dictionaries via `analyze(packet)`.
+- Passes the packet to every registered detector sequentially.
+- Collects non-None alert dictionaries into a list and returns `alerts`.
+
+### Registered Detectors
+1. **`SynScanDetector`**: Detects TCP SYN stealth port scanning (5 unique destination ports per source-destination pair within a 10-second window).
+2. **`SynFloodDetector`**: Detects volumetric TCP SYN flood DoS attacks (20 SYN packets per source IP within a 5-second window).
+
+### Change to `test_capture.py`
+- Removed direct imports and instantiations of `SynScanDetector` and `SynFloodDetector`.
+- Imported and instantiated `detection_engine = DetectionEngine()`.
+- Updated `packet_callback(packet)` to call `alerts = detection_engine.analyze(parsed_packet)` and print all alerts returned in the list.
+
+### Unchanged Detection Logic & Thresholds
+- `syn_flood_detector.py` was not modified.
+- `SynScanDetector` threshold (5 unique ports / 10s) and detection logic were left 100% unchanged.
+- `SynFloodDetector` threshold (20 SYNs / 5s) and detection logic were left 100% unchanged.
+
+### Files Changed
+- `detection_engine.py`
+- `test_capture.py`
+- `test_detection_engine_unified.py`
+- `DEVELOPMENT_NOTES.md`
+
+### Testing Performed & Results
+1. **Compilation Verification**:
+   ```bash
+   .venv/bin/python -m py_compile detection_engine.py test_capture.py
+   ```
+   **Result**: Clean compilation, zero syntax errors.
+
+2. **Unified Engine Test Suite**:
+   ```bash
+   .venv/bin/python test_detection_engine_unified.py
+   ```
+   **Result**:
+   - SYN Scan Test: Triggered `Possible TCP SYN Port Scan` alert via `DetectionEngine`.
+   - SYN Flood Test: Triggered `Possible TCP SYN Flood` alert via `DetectionEngine`.
+
+3. **Regression & Integration Test Suite Execution**:
+   - `test_packet_parser.py`: 6/6 tests passed (`OK`).
+   - `test_detection_engine.py`: 5/5 SYN scan test scenarios passed.
+   - `test_syn_flood_detector.py`: 5/5 SYN flood test scenarios passed.
+   - `test_live_detection.py`: 5 SYN packets executed through `packet_callback()`, generating port scan alert on 5th port.
+   - `test_syn_flood_integration.py`: 20 SYN packets executed through `packet_callback()`, generating SYN flood alert on 20th packet.
+
+### Result
+Status: SUCCESS
+
+### Limitations & Next Steps
+- The integration tests (`test_live_detection.py`, `test_syn_flood_integration.py`) used constructed Scapy packets passed through `packet_callback()`, NOT real network attacks.
+- Next Phase: **Phase 8 — Alert Management Engine** (centralizing alert formatting, deduplication, and persistent logging).
+
+### Git Commit
+Commit: 876ad168019be7506871ea0153919ad0a998246b
+Message: feat: unify security detection engine
+
+
 
 
 

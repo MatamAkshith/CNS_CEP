@@ -47,13 +47,17 @@ This project is a Computer Network Security (CNS) Coursework Enhancement Project
 - TCP SYN Port Scan Detector module (`detection_engine.py` / `SynScanDetector`)
 - Detection engine test suite (`test_detection_engine.py` covering 5 test scenarios)
 
+- Integrated `SynScanDetector` into live capture callback (`test_capture.py`)
+- Controlled integration test suite (`test_live_detection.py`) passing synthetic Scapy SYN packets through `packet_callback()`
+
 ### In Progress
-- Live capture integration with Security Detection Engine
+- Additional attack detection signatures and alerting options
 
 ### Not Yet Implemented
 - Additional attack signature detectors (e.g., NULL scan, XMAS scan, UDP sweep)
 - Real-time alert logging / PCAP storage
 - User interface / Dashboard visualization
+
 
 ---
 
@@ -369,8 +373,78 @@ Status: SUCCESS
 - In-memory state tracking does not persist state across process restarts.
 
 ### Git Commit
-Commit: 475d9cb519479ed26db26356cd15ff12374141a0
+Commit: 7b783154a109f3082f1e06ce68addaf73982965d
 Message: feat: add tcp syn scan detection
+
+---
+
+## 2026-10-06 — Live Detection Integration
+
+### Objective
+Integrate the `SynScanDetector` threat detection engine into `test_capture.py`'s live packet capture pipeline so that every captured network packet is parsed and continuously analyzed for TCP SYN port scanning threats in real time.
+
+### Why We Did It
+To bridge packet parsing and security analysis, connecting the live capture pipeline directly to the threat detection engine. This ensures security alerts are emitted immediately when a port scanning pattern is detected during live packet capture.
+
+### Architecture & Pipeline
+```
+Scapy Live sniff()
+       ↓
+packet_callback(packet)
+       ↓
+parse_packet(packet)
+       ↓
+Normalized Packet Dictionary
+       ↓
+detector.analyze(parsed_packet)
+       ↓
+Security Alert Output (if threshold met) & Normalized Terminal Display
+```
+
+### How Detection Was Integrated
+- Modified `test_capture.py`:
+  - Created a single persistent instance of `SynScanDetector()` at module level.
+  - Updated `packet_callback(packet)` to pass `parsed_packet` to `detector.analyze()`.
+  - Added real-time alert printing when `detector.analyze()` returns a non-None alert dictionary.
+- Created `test_live_detection.py`:
+  - Built controlled integration test harness passing 5 synthetic Scapy SYN packets (ports 22, 23, 80, 443, 8080) through `packet_callback()`.
+
+### Files Changed
+- `test_capture.py`
+- `test_live_detection.py`
+- `DEVELOPMENT_NOTES.md`
+
+### Testing Performed & Results
+1. **Controlled Live Integration Test**:
+   ```bash
+   .venv/bin/python test_live_detection.py
+   ```
+   **Result**: Packets sent to ports 22, 23, 80, 443 printed normal output blocks. Upon receiving the 5th SYN packet to port 8080, a security alert was generated:
+   `🚨 SECURITY ALERT {'type': 'Possible TCP SYN Port Scan', 'source_ip': '192.168.1.50', 'destination_ip': '192.168.1.10', 'ports_scanned': [22, 23, 80, 443, 8080], 'window': 10}`
+
+2. **Detection Engine Test Suite**:
+   ```bash
+   .venv/bin/python test_detection_engine.py
+   ```
+   **Result**: 5/5 detection test scenarios passed as expected.
+
+3. **Automated Parser Unit Tests**:
+   ```bash
+   .venv/bin/python -m unittest test_packet_parser.py
+   ```
+   **Result**: 6/6 parser unit tests passed in 0.001s (`OK`).
+
+### Result
+Status: SUCCESS
+
+### Limitations
+- The SYN scan live detection verification used constructed Scapy packets passed directly through `packet_callback()` in `test_live_detection.py` rather than executing an actual live network attack against the local interface.
+
+### Git Commit
+Commit: 9fc88c4a42cc1d0592d3ca3f0a1a209729aa30f5
+Message: feat: integrate syn scan detection with live capture
+
+
 
 
 

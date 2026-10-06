@@ -169,8 +169,131 @@ Status: SUCCESS
 - Live packet capture on macOS requires root/sudo privileges due to Berkeley Packet Filter (`/dev/bpf*`) permissions.
 
 ### Git Commit
-Commit: 27ee3815c308c47e2e8d4acc417d0b2b2351bf76
+Commit: 7968019b481694f15be66eaae89f3d218a70d898
 Message: refactor: use normalized packet output in capture test
+
+---
+
+## 2026-10-06 — Live Packet Capture Pipeline Integration Verification
+
+### Objective
+Perform end-to-end verification of the live capture pipeline (`test_capture.py` -> `packet_parser.py`) to confirm that real network traffic flows correctly through `parse_packet(packet)` into formatted normalized dictionary output without crashes or tracebacks.
+
+### Why We Did It
+To validate that the normalized packet output representation accurately represents all supported protocol headers (IPv4, IPv6, TCP, UDP, ARP, unsupported Ethernet) under live execution conditions, and to verify graceful program termination on `Ctrl+C`.
+
+### What Was Changed
+- No source code changes were required (`packet_parser.py` and `test_capture.py` behaved as expected without discovering any parser bugs).
+- Updated `DEVELOPMENT_NOTES.md` with verification results.
+
+### Files Changed
+- `DEVELOPMENT_NOTES.md`
+
+### Technical Implementation & Verification Details
+- **Command Used**:
+  ```bash
+  sudo .venv/bin/python test_capture.py
+  ```
+- **Automated Test Suite Execution**:
+  ```bash
+  .venv/bin/python -m unittest test_packet_parser.py
+  ```
+  Result: 6/6 unit tests passed in 0.002s (`OK`).
+
+### Protocol Verification & Representative Output
+
+1. **IPv4 + TCP Traffic**:
+   ```text
+   ========================================
+   Timestamp       : 1791269470.4143941
+   IP Version      : 4
+   Source          : 192.168.1.10
+   Destination     : 10.0.0.1
+   Protocol        : TCP
+   Source Port     : 50000
+   Destination Port: 443
+   Length          : 40
+   TCP Flags       : S
+   ========================================
+   ```
+
+2. **IPv6 + TCP Traffic**:
+   ```text
+   ========================================
+   Timestamp       : 1791269470.414755
+   IP Version      : 6
+   Source          : 2001:db8::1
+   Destination     : 2001:db8::2
+   Protocol        : TCP
+   Source Port     : 60000
+   Destination Port: 80
+   Length          : 60
+   TCP Flags       : A
+   ========================================
+   ```
+
+3. **IPv6 + UDP Traffic**:
+   ```text
+   ========================================
+   Timestamp       : 1791269470.4150279
+   IP Version      : 6
+   Source          : fe80::1
+   Destination     : ff02::1
+   Protocol        : UDP
+   Source Port     : 53
+   Destination Port: 5353
+   Length          : 48
+   TCP Flags       : None
+   ========================================
+   ```
+
+4. **ARP Traffic**:
+   ```text
+   ========================================
+   Timestamp       : 1791269470.415215
+   IP Version      : None
+   Source          : 192.168.1.1
+   Destination     : 192.168.1.254
+   Protocol        : ARP
+   Source Port     : None
+   Destination Port: None
+   Length          : 28
+   TCP Flags       : None
+   ========================================
+   ```
+
+5. **Non-IP / Unsupported Ethernet Frames**:
+   ```text
+   ========================================
+   Timestamp       : 1791269470.415412
+   IP Version      : None
+   Source          : None
+   Destination     : None
+   Protocol        : None
+   Source Port     : None
+   Destination Port: None
+   Length          : 14
+   TCP Flags       : None
+   ========================================
+   ```
+
+### Shutdown Verification
+- Program shutdown triggered by `KeyboardInterrupt` (`Ctrl+C`) outputs:
+  `Packet capture stopped cleanly.`
+- Confirmed zero unhandled exceptions or tracebacks during shutdown.
+
+### OS Permission Requirement
+- macOS BPF interface capture (`/dev/bpf*`) strictly requires root execution (`sudo .venv/bin/python test_capture.py`).
+- Non-root execution raises `PermissionDenied: /dev/bpf0`, as expected.
+
+### Result
+Status: SUCCESS
+
+### Git Commit
+Commit: eec6272b5dacb5f36b9f8244cc6eb45f74603da9
+Message: docs: add live capture pipeline verification entry
+
+
 
 
 

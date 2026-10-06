@@ -39,6 +39,8 @@ This project is a Computer Network Security (CNS) Coursework Enhancement Project
 - Numeric port enforcement (`int(sport)`, `int(dport)`) preventing Scapy service name strings
 - Non-IP / Unsupported packet handling (safe fallback with `None` fields)
 - Automated unit test suite (`test_packet_parser.py` testing 6 protocol combinations)
+- Refactored `test_capture.py` live sniffer callback to render normalized output dictionary
+- Added graceful exit handling on `KeyboardInterrupt` (`Ctrl+C`) during live packet capture
 
 ### In Progress
 - Security analysis engine & signature detection planning
@@ -123,7 +125,53 @@ Status: SUCCESS
 - VLAN tagged frames (802.1Q) are not yet explicitly unpacked before IP layer inspection.
 
 ### Git Commit
-Commit: 110b81af857ac3d1308ab800d3d2ac3d1c55e8aa
+Commit: ce53d25ceee8012be798a96ddc73fcdb7a234dfb
 Message: feat: add IPv6 UDP and ARP packet parsing
+
+---
+
+## 2026-10-06 — Refactor Live Capture Output to Use Normalized Parser Fields
+
+### Objective
+Refactor `test_capture.py` so that live packet capture strictly uses and formats the normalized dictionary produced by `parse_packet(packet)`.
+
+### Why We Did It
+To verify end-to-end integration between `test_capture.py` and `packet_parser.py` without printing raw Scapy packet debugging dumps (`packet.show()`), ensuring readable terminal output for IPv4, IPv6, TCP, UDP, ARP, and non-IP traffic.
+
+### What Was Changed
+- Updated `test_capture.py`:
+  - Standardized block border `========================================` around each packet report.
+  - Formatted fields: `Timestamp`, `IP Version`, `Source`, `Destination`, `Protocol`, `Source Port`, `Destination Port`, `Length`, `TCP Flags`.
+  - Added `try...except KeyboardInterrupt` block so stopping the live sniffer with Ctrl+C prints `Packet capture stopped cleanly.` rather than raising a stack trace.
+
+### Files Changed
+- `test_capture.py`
+- `DEVELOPMENT_NOTES.md`
+
+### Technical Implementation
+The `packet_callback(packet)` receives raw packets from `scapy.all.sniff`, passes each packet to `parse_packet(packet)`, and prints the key-value attributes from the returned dictionary. Unavailable protocol fields (such as ports or IP versions for ARP or non-IP packets) cleanly print as `None`.
+
+### Testing Performed
+1. Automated unit test suite execution:
+   ```bash
+   .venv/bin/python -m unittest test_packet_parser.py
+   ```
+   Result: 6/6 tests passed (`OK`).
+
+2. Callback formatting verification script:
+   - Passed synthetic IPv4+TCP and ARP packets to `packet_callback`.
+   - Verified formatted output matches specified template with headers, `IP Version`, ports, and `None` fallbacks.
+
+### Result
+Status: SUCCESS
+
+### Limitations / Known Issues
+- Live packet capture on macOS requires root/sudo privileges due to Berkeley Packet Filter (`/dev/bpf*`) permissions.
+
+### Git Commit
+Commit: 27ee3815c308c47e2e8d4acc417d0b2b2351bf76
+Message: refactor: use normalized packet output in capture test
+
+
 
 

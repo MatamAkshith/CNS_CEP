@@ -9,43 +9,44 @@ This project is a Computer Network Security (CNS) Coursework Enhancement Project
 ### Current Architecture
 
 ```
-       Network Interface
-               ↓
-    Scapy Live Packet Capture
-               ↓
-        Packet Callback
-               ↓
-         Packet Parser
-               ↓
-    Normalized Packet Data
-               ↓
-        DetectionEngine
+                       main.py
+             (Application Entry Point)
+                         ↓
+             Scapy Live Packet Capture
+                         ↓
+                  packet_callback()
+                         ↓
+                   packet_parser
+                         ↓
+              Normalized Packet Data
+                         ↓
+                  DetectionEngine
     ┌──────────┬──────────┬──────────┐
     ↓          ↓          ↓          ↓
 SynScan    SynFlood    UdpScan    IcmpSweep
 Detector   Detector    Detector   Detector
  (TCP)      (Flood)     (UDP)      (ICMP)
     └──────────┴──────────┴──────────┘
-               ↓
-     List of Security Alerts
-               ↓
-          AlertManager
-    ┌──────────┼──────────┐
-    ↓          ↓          ↓
- History  Deduplication Formatting
-    └──────────┬──────────┘
-               ↓
-      Accepted Alert Stream
-    ┌──────────┼──────────┐
-    ↓          ↓          ↓
-Console    Statistics   StorageManager
-Output      Manager     (alerts.json)
-                            ↓
-                      HTTP API Server
-                     (http_server.py)
-                    ┌───────┴───────┐
-                    ↓               ↓
-              GET /alerts    GET /statistics
+                         ↓
+               List of Security Alerts
+                         ↓
+                    AlertManager
+              ┌──────────┼──────────┐
+              ↓          ↓          ↓
+           History  Deduplication Formatting
+              └──────────┬──────────┘
+                         ↓
+                Accepted Alert Stream
+              ┌──────────┼──────────┐
+              ↓          ↓          ↓
+          Console    Statistics   StorageManager
+          Output      Manager     (alerts.json)
+                                      ↓
+                                HTTP API Server
+                               (http_server.py)
+                              ┌───────┴───────┐
+                              ↓               ↓
+                        GET /alerts    GET /statistics
 ```
 
 ---
@@ -85,9 +86,10 @@ Output      Manager     (alerts.json)
 - Phase 11 — HTTP Query Interface / API (`http_server.py` / RESTful endpoints `/alerts` and `/statistics`)
 - Phase 12A — UDP Scan Detection (`udp_scan_detector.py` / `UdpScanDetector` detecting multi-port UDP recon)
 - Phase 12B — ICMP Sweep Detection (`icmp_sweep_detector.py` / `IcmpSweepDetector` detecting ICMP host discovery)
+- Phase 13.1 — Application Entry Point / Capture Pipeline (`main.py` standalone production application launcher)
 
 ### In Progress
-- None (Phase 12B complete)
+- None (Phase 13.1 complete)
 
 ### Not Yet Implemented
 - User interface / Dashboard visualization
@@ -1271,8 +1273,121 @@ Attackers use ICMP Echo Request ("ping sweep") messages as an initial host-disco
 - **In-Memory Tracking State**: Tracking state resets upon process termination.
 - **Static Configuration**: Threshold set to 5 hosts / 10-second window.
 
+---
+
+## 2026-10-08 — Application Entry Point / Capture Pipeline (Phase 13.1)
+
+### Objective
+Introduce `main.py` as the official, standalone application entry point for the packet-sniffer system, establishing a clean separation between production application startup and test-oriented execution scripts (`test_capture.py`).
+
+### Architecture & Capture Flow
+The complete runtime capture pipeline is wired inside `main.py`:
+
+```
+main.py (Application Entry Point)
+   ↓
+initialize DetectionEngine
+   ↓
+initialize AlertManager
+   ↓
+initialize StatisticsManager
+   ↓
+initialize StorageManager
+   ↓
+Scapy sniff()
+   ↓
+packet_callback()
+   ↓
+parse_packet() (packet_parser)
+   ↓
+DetectionEngine (SynScan, SynFlood, UdpScan, IcmpSweep)
+   ↓
+AlertManager (Deduplication & Formatting)
+   ↓
+StatisticsManager + StorageManager (alerts.json)
+```
+
+### Exact Implementation
+`main.py` encapsulates the complete end-to-end operational pipeline:
+- **Imports**: Loads `DetectionEngine`, `AlertManager`, `StatisticsManager`, `StorageManager`, `parse_packet`, and Scapy `sniff`.
+- **Initialization**: Instantiates global application managers: `detection_engine`, `alert_manager`, `statistics_manager`, and `storage_manager`.
+- **`packet_callback(packet)`**:
+  1. Parses raw captured packet via `parse_packet(packet)`.
+  2. Passes normalized packet payload dictionary to `detection_engine.analyze(parsed_packet)`.
+  3. Iterates over generated security alerts, processing each through `alert_manager.process(alert)`.
+  4. For accepted (non-duplicate) alerts:
+     - Updates real-time threat metrics in `statistics_manager.process(processed_alert)`.
+     - Persists alert payload to `alerts.json` via `storage_manager.save_alert(processed_alert)`.
+     - Renders formatted alert to console using `alert_manager.format_alert(processed_alert)`.
+  5. Prints human-readable normalized packet details to terminal.
+- **`main()`**: Prints startup banner, initiates `sniff(prn=packet_callback)`, and catches `KeyboardInterrupt` (`Ctrl+C`) for graceful shutdown.
+
+### Application Entry Point
+```python
+if __name__ == "__main__":
+    main()
+```
+`main.py` serves as the primary executable script for running the packet sniffer in production environments.
+
+### Execution Command
+```bash
+sudo .venv/bin/python main.py
+```
+*Note*: On macOS, packet capture requires `sudo` privileges to open Berkeley Packet Filter (`/dev/bpf*`) network interfaces.
+
+### Live Capture Verification
+Live packet capture was verified using `main.py` on active network interfaces. The application captured and displayed real-time traffic including:
+- IPv4 TCP traffic
+- IPv6 TCP traffic
+- IPv6 UDP traffic
+- ARP broadcast frames
+- General IPv4/IPv6 traffic
+
+Interrupting the live capture via `Ctrl+C` stopped the process cleanly with `"Packet capture stopped cleanly."` without tracebacks or errors.
+
+### Automated Regression Testing
+Executed project-wide automated test suite:
+```bash
+.venv/bin/python -m unittest discover
+```
+**Result**:
+```text
+Ran 45 tests in 0.529s
+OK
+```
+All **45/45** test cases passed cleanly.
+
+### Regression Coverage
+The automated test discovery suite verified the full spectrum of implemented features:
+- TCP SYN Scan Detection (`SynScanDetector`)
+- TCP SYN Flood Detection (`SynFloodDetector`)
+- UDP Port Scan Detection (`UdpScanDetector`)
+- ICMP Host Sweep Detection (`IcmpSweepDetector`)
+- Packet Parser Protocol Normalization (`packet_parser.py`)
+- Unified Detection Engine (`DetectionEngine`)
+- Alert Manager Deduplication & Formatting (`AlertManager`)
+- Statistics & Analytics Aggregation (`StatisticsManager`)
+- Persistent JSON Alert Storage (`StorageManager` / `alerts.json`)
+- RESTful HTTP Query API Server (`http_server.py`)
+
+### Design Decisions
+The implementation intentionally remained minimal and pragmatic:
+- Reused all existing, fully-tested detection, parsing, alert, statistics, and storage modules without modification.
+- Avoided adding heavy web frameworks, external database dependencies, or unnecessary abstraction layers.
+- Maintained a clean separation between the production application entry point (`main.py`) and developer test scripts (`test_capture.py`).
+
+### Files Created / Modified
+- `main.py` (New — Standalone application entry point)
+- `DEVELOPMENT_NOTES.md` (Updated — Architecture, project status, and Phase 13.1 documentation)
+
+### Known Limitations
+- **Privilege Requirement**: Scapy live capture requires `sudo` / root permissions on macOS for BPF interface access.
+- **Default Interface**: Captures on Scapy's default network interface. Interface selection/CLI argument flags are not yet implemented.
+- **Inline Wiring**: `main.py` contains `packet_callback` wiring inline rather than introducing a separate capture module abstraction.
+
 ### Project Status
-- **Phase 12B — ICMP Sweep Detection**: COMPLETE
+- **Phase 13.1 — Application Entry Point / Capture Pipeline**: COMPLETE
+
 
 
 

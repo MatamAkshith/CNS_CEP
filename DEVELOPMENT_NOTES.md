@@ -20,11 +20,12 @@ This project is a Computer Network Security (CNS) Coursework Enhancement Project
     Normalized Packet Data
                ↓
         DetectionEngine
-    ┌──────────┴──────────┐
-    ↓                     ↓
-SynScanDetector   SynFloodDetector
-(Port Scan)        (Volumetric Flood)
-    └──────────┬──────────┘
+    ┌──────────┼──────────┐
+    ↓          ↓          ↓
+SynScan    SynFlood    UdpScan
+Detector   Detector    Detector
+ (TCP)      (Flood)     (UDP)
+    └──────────┼──────────┘
                ↓
      List of Security Alerts
                ↓
@@ -81,9 +82,10 @@ Output      Manager     (alerts.json)
 - Phase 9 — Statistics & Analytics (`statistics_manager.py` / `StatisticsManager` class supporting metrics aggregation, top source, top alert type, and summary statistics)
 - Phase 10 — Persistent Alert Logging (`storage_manager.py` / `StorageManager` class supporting persistent JSON alert logging in `alerts.json`)
 - Phase 11 — HTTP Query Interface / API (`http_server.py` / RESTful endpoints `/alerts` and `/statistics`)
+- Phase 12A — UDP Scan Detection (`udp_scan_detector.py` / `UdpScanDetector` detecting multi-port UDP recon)
 
 ### In Progress
-- None (Phase 11 complete)
+- None (Phase 12A complete)
 
 ### Not Yet Implemented
 - User interface / Dashboard visualization
@@ -1035,8 +1037,108 @@ def send_json_response(self, status_code, data):
 - **No Rate Limiting**: Does not limit client request rates.
 - **Persistence Dependent**: Storage layer remains file-based JSON (`alerts.json`).
 
+---
+
+## 2026-10-08 — UDP Scan Detection (Phase 12A)
+
+### Objective
+Implement `UdpScanDetector` in `udp_scan_detector.py` and register it inside `DetectionEngine` (`detection_engine.py`) to detect multi-port UDP reconnaissance attacks across network traffic.
+
+### Why UDP Scan Detection Was Added
+Unlike TCP, UDP is a connectionless protocol that does not utilize a three-way handshake (SYN/SYN-ACK/ACK). Services such as DNS (port 53), DHCP (ports 67/68), NTP (port 123), SNMP (port 161), and IPsec (port 500) rely on UDP. Attackers send raw UDP datagrams to various ports to discover open services and map vulnerable network assets. Adding `UdpScanDetector` complements the existing TCP SYN scan and SYN flood detectors to provide multi-protocol security coverage.
+
+### Detection Rule & Configuration
+- **Protocol**: UDP (`packet.get("protocol") == "UDP"`)
+- **Time Window**: 10 seconds (`time_window = 10`)
+- **Port Threshold**: 5 unique destination ports (`port_threshold = 5`)
+- **Scope**: Tracks unique target destination ports independently for each `(source_ip, destination_ip)` pair.
+
+### Exact Implementation Details
+1. **`UdpScanDetector` (`udp_scan_detector.py`)**:
+   - `__init__(time_window=10, port_threshold=5)`: Initializes parameters and tracking dictionary `self.tracker`.
+   - `analyze(packet)`:
+     - Ignores non-UDP packets (`protocol != "UDP"` returns `None`).
+     - Extracts `source_ip`, `destination_ip`, `destination_port`, and `timestamp`. Returns `None` if any field is missing.
+     - Maps timestamps and destination ports under connection key tuple `(source_ip, destination_ip)`.
+     - Evicts timestamps older than 10 seconds.
+     - Calculates set of unique destination ports within the window.
+     - Returns alert dictionary when unique port count reaches or exceeds 5:
+       ```python
+       {
+           "type": "Possible UDP Port Scan",
+           "source_ip": source_ip,
+           "destination_ip": destination_ip,
+           "ports_scanned": sorted(unique_ports),
+           "window": 10
+       }
+       ```
+
+2. **`DetectionEngine` (`detection_engine.py`)**:
+   - Registered `UdpScanDetector()` inside `DetectionEngine.__init__()` array alongside `SynScanDetector()` and `SynFloodDetector()`.
+   - `DetectionEngine.analyze(packet)` automatically routes normalized packets through all three security detectors.
+
+### Files Added / Modified
+- `udp_scan_detector.py` (New — `UdpScanDetector` class)
+- `detection_engine.py` (Modified — Registered `UdpScanDetector` in `DetectionEngine`)
+- `test_udp_scan_detector.py` (New — Unit test suite with 5 test cases)
+- `test_detection_engine_udp.py` (New — `DetectionEngine` integration test for UDP scan)
+- `test_udp_scan_integration.py` (New — End-to-end `packet_callback` integration test)
+- `DEVELOPMENT_NOTES.md` (Updated — Architecture, project status, and Phase 12A documentation entry)
+
+### Test Coverage & Verification Results
+
+1. **Compilation Check**:
+   ```bash
+   .venv/bin/python -m py_compile udp_scan_detector.py detection_engine.py test_udp_scan_detector.py test_detection_engine_udp.py test_udp_scan_integration.py
+   ```
+   **Result**: Clean compilation, zero syntax errors.
+
+2. **UDP Scan Detector Unit Tests (`test_udp_scan_detector.py`)**:
+   ```bash
+   .venv/bin/python test_udp_scan_detector.py
+   ```
+   **Result**: 5/5 test cases passed (`OK`):
+   - Test 1: 4 unique UDP ports -> no alert
+   - Test 2: 5 unique UDP ports -> alert triggered (`Possible UDP Port Scan`)
+   - Test 3: Duplicate ports -> no alert
+   - Test 4: Packets outside 10s time window -> no alert
+   - Test 5: Non-UDP packets (TCP) -> no alert
+
+3. **DetectionEngine UDP Integration Test (`test_detection_engine_udp.py`)**:
+   ```bash
+   .venv/bin/python test_detection_engine_udp.py
+   ```
+   **Result**: Passed (`DetectionEngine` correctly returned `Possible UDP Port Scan` alert).
+
+4. **End-to-End Callback Integration Test (`test_udp_scan_integration.py`)**:
+   ```bash
+   .venv/bin/python test_udp_scan_integration.py
+   ```
+   **Result**: Passed (Constructed Scapy `IP/UDP` packets to ports 53, 67, 123, 161, 500; successfully triggered alert through `packet_callback()` pipeline -> `parse_packet()` -> `DetectionEngine` -> `AlertManager` -> `StatisticsManager` -> `StorageManager` -> formatted alert output).
+
+5. **Full System Regression Suite**:
+   - `test_alert_manager.py`: 7/7 passed
+   - `test_packet_parser.py`: 6/6 passed
+   - `test_detection_engine.py`: 5/5 passed
+   - `test_syn_flood_detector.py`: 5/5 passed
+   - `test_detection_engine_unified.py`: Passed (unified SYN scan & flood detection paths)
+   - `test_statistics_manager.py`: 10/10 passed
+   - `test_statistics_integration.py`: 3/3 passed
+   - `test_storage_manager.py`: 6/6 passed
+   - `test_storage_integration.py`: 3/3 passed
+   - `test_storage_persistence.py`: 1/1 passed
+   - `test_http_server.py`: 8/8 passed
+   - `test_live_detection.py`: Passed (live SYN scan simulation)
+   - `test_syn_flood_integration.py`: Passed (live SYN flood simulation)
+
+### Known Limitations
+- **Passive Header Analysis Only**: Relies strictly on sent UDP packet headers; does not evaluate ICMP Port Unreachable response packets.
+- **In-Memory Window State**: Tracking dictionaries are maintained in RAM and reset upon process termination.
+- **Static Window Configuration**: Fixed 10-second window / 5-port threshold; low-and-slow scans spanning longer intervals will evade detection.
+
 ### Project Status
-- **Phase 11 — HTTP Query Interface / API**: COMPLETE
+- **Phase 12A — UDP Scan Detection**: COMPLETE
+
 
 
 

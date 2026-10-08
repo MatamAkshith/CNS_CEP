@@ -39,6 +39,12 @@ SynScanDetector   SynFloodDetector
     ↓          ↓          ↓
 Console    Statistics   StorageManager
 Output      Manager     (alerts.json)
+                            ↓
+                      HTTP API Server
+                     (http_server.py)
+                    ┌───────┴───────┐
+                    ↓               ↓
+              GET /alerts    GET /statistics
 ```
 
 ---
@@ -74,13 +80,13 @@ Output      Manager     (alerts.json)
 - Phase 8 — Alert Management Engine (`alert_manager.py` / `AlertManager` class supporting alert history, deduplication, and formatting)
 - Phase 9 — Statistics & Analytics (`statistics_manager.py` / `StatisticsManager` class supporting metrics aggregation, top source, top alert type, and summary statistics)
 - Phase 10 — Persistent Alert Logging (`storage_manager.py` / `StorageManager` class supporting persistent JSON alert logging in `alerts.json`)
+- Phase 11 — HTTP Query Interface / API (`http_server.py` / RESTful endpoints `/alerts` and `/statistics`)
 
 ### In Progress
-- None (Phase 10 complete)
+- None (Phase 11 complete)
 
 ### Not Yet Implemented
 - User interface / Dashboard visualization
-- Web HTTP API server
 
 
 
@@ -915,8 +921,123 @@ Verified that alerts written to disk by an initial `StorageManager` instance per
 - **No Concurrent Write Lock**: `StorageManager` performs full file reads/writes without file-locking mechanisms (`fcntl` or mutexes). Simultaneous writes from multiple processes could cause race conditions.
 - **No Indexing / Query Optimization**: Filtering or searching stored alerts requires reading the entire JSON array into memory.
 
+---
+
+## 2026-10-08 — HTTP Query Interface / API
+
+### Objective
+Implement `http_server.py` to provide a lightweight RESTful HTTP query interface using Python standard library components (`http.server.HTTPServer` and `BaseHTTPRequestHandler`). This allows external HTTP clients, browser tools, and security dashboards to query persisted security alerts and analytics.
+
+### Why Python Standard Library Was Selected
+The HTTP server was built strictly using Python standard modules (`http.server`, `urllib.parse`, `json`) rather than external web frameworks (e.g. Flask, FastAPI, Django) because:
+1. **Zero External Dependencies**: Standard library modules ensure the project runs out of the box in any standard Python environment without requiring additional `pip` installs.
+2. **Lightweight & Fast**: Minimal overhead for course-project scope requirements.
+3. **Transparent Execution**: Provides explicit control over request parsing, status code handling, header construction, and JSON response formatting.
+
+### Phase 11 Architecture
+`http_server.py` acts as an HTTP interface layer sitting on top of `StorageManager` and `StatisticsManager`:
+
+```
+   HTTP Client (curl / Browser / Dashboard)
+                 │
+                 ▼
+       RequestHandler (BaseHTTPRequestHandler)
+                 │
+                 ├── GET /alerts?type=...&source_ip=... ──► StorageManager ──► alerts.json
+                 │
+                 └── GET /statistics ──────────────────► StatisticsManager ──► Analytical Summary
+```
+
+### Endpoint Documentation & Query Behavior
+1. **`GET /alerts`**:
+   - Fetches and returns all persisted security alerts from `alerts.json` as a JSON array.
+   - **Supported Query Parameters**:
+     - `type`: Filters alerts by matching alert type string (e.g. `/alerts?type=Possible%20TCP%20SYN%20Flood`).
+     - `source_ip`: Filters alerts by matching source IP address (e.g. `/alerts?source_ip=192.168.1.50`).
+     - **Combined Filtering**: Simultaneously filters by both `type` and `source_ip` (e.g. `/alerts?type=Possible%20TCP%20SYN%20Flood&source_ip=192.168.1.50`).
+   - **Error Handling**: Passing unsupported query parameters (e.g. `/alerts?foo=bar`) returns HTTP `400 Bad Request` with an error message and a list of unsupported parameters.
+
+2. **`GET /statistics`**:
+   - Reads persisted alerts from `alerts.json`, processes them through a newly instantiated `StatisticsManager` instance, and returns an analytical summary JSON object containing:
+     - `total_alerts`
+     - `alerts_by_type`
+     - `alerts_by_source`
+     - `top_source`
+     - `top_alert_type`
+   - **Error Handling**: Query parameters are not allowed on `/statistics` (e.g. `/statistics?foo=bar`). Passing any query parameters returns HTTP `400 Bad Request`.
+
+3. **`GET /<unknown>`**:
+   - Returns HTTP `404 Not Found` with `{"error": "Endpoint not found"}`.
+
+### Centralized `send_json_response()` Helper
+The `RequestHandler` class encapsulates JSON response formatting in a dedicated method:
+```python
+def send_json_response(self, status_code, data):
+    response = json.dumps(data).encode("utf-8")
+    self.send_response(status_code)
+    self.send_header("Content-Type", "application/json")
+    self.send_header("Content-Length", str(len(response)))
+    self.end_headers()
+    self.wfile.write(response)
+```
+
+### HTTP Status & Error Codes
+- **`200 OK`**: Successful request execution.
+- **`400 Bad Request`**: Unsupported query parameters or query parameter usage on endpoints that forbid them.
+- **`404 Not Found`**: Request to an undefined URL endpoint.
+- **`500 Internal Server Error`**: Global try/except fallback handling unhandled server exceptions.
+
+### Files Created / Modified
+- `http_server.py` (New — `RequestHandler` and HTTP server runner)
+- `test_http_server.py` (New — Automated HTTP API test suite)
+- `DEVELOPMENT_NOTES.md` (Updated — Architecture, project status, and Phase 11 documentation entry)
+
+### Test Coverage & Full System Regression
+1. **Compilation Check**:
+   ```bash
+   .venv/bin/python -m py_compile http_server.py test_http_server.py
+   ```
+   **Result**: Clean compilation, zero syntax errors.
+
+2. **HTTP API Automated Test Suite (`test_http_server.py`)**:
+   ```bash
+   .venv/bin/python -m unittest test_http_server.py
+   ```
+   **Result**: 8/8 test cases passed in 0.516s (`OK`):
+   - `test_get_all_alerts` (200 OK, returns all alerts)
+   - `test_filter_by_type` (200 OK, filters by alert type)
+   - `test_filter_by_source_ip` (200 OK, filters by source IP)
+   - `test_combined_filter` (200 OK, filters by both type and source IP)
+   - `test_statistics` (200 OK, computes analytical summary from storage)
+   - `test_unknown_endpoint` (404 Not Found, error payload)
+   - `test_unsupported_query_parameter` (400 Bad Request, list of invalid params)
+   - `test_statistics_query_parameter` (400 Bad Request, query parameter forbidden)
+
+3. **Full Regression Suite**:
+   - `test_alert_manager.py`: 7/7 passed
+   - `test_packet_parser.py`: 6/6 passed
+   - `test_detection_engine.py`: 5/5 passed
+   - `test_syn_flood_detector.py`: 5/5 passed
+   - `test_detection_engine_unified.py`: Passed (unified detection engine paths)
+   - `test_statistics_manager.py`: 10/10 passed
+   - `test_statistics_integration.py`: 3/3 passed
+   - `test_storage_manager.py`: 6/6 passed
+   - `test_storage_integration.py`: 3/3 passed
+   - `test_storage_persistence.py`: 1/1 passed
+   - `test_live_detection.py`: Passed (live SYN scan simulation)
+   - `test_syn_flood_integration.py`: Passed (live SYN flood simulation)
+
+### Known Limitations
+- **Read-Only API**: The HTTP API currently supports only `GET` requests; it does not accept `POST`, `PUT`, or `DELETE` methods.
+- **No Authentication / Authorization**: The server provides public endpoint access without token/password header checks.
+- **Single-Threaded Server**: Uses Python standard library `HTTPServer` designed for local course-project development, not heavy concurrent production loads.
+- **No Pagination**: `/alerts` returns the complete list of persisted alerts without limit/offset pagination.
+- **No Rate Limiting**: Does not limit client request rates.
+- **Persistence Dependent**: Storage layer remains file-based JSON (`alerts.json`).
+
 ### Project Status
-- **Phase 10 — Persistent Alert Logging**: COMPLETE
+- **Phase 11 — HTTP Query Interface / API**: COMPLETE
+
 
 
 

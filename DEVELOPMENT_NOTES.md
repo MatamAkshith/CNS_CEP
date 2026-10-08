@@ -34,7 +34,11 @@ SynScanDetector   SynFloodDetector
  History  Deduplication Formatting
     └──────────┬──────────┘
                ↓
-    Human-Readable Console Output
+      Accepted Alert Stream
+    ┌──────────┴──────────┐
+    ↓                     ↓
+Console Output    StatisticsManager
+               (In-Memory Analytics)
 ```
 
 ---
@@ -67,16 +71,16 @@ SynScanDetector   SynFloodDetector
 - Unified Detection Engine (`detection_engine.py` / `DetectionEngine` class registering `SynScanDetector` & `SynFloodDetector`)
 - Updated `test_capture.py` to route normalized packets strictly through `DetectionEngine`
 - Unified engine test suite (`test_detection_engine_unified.py` testing both SYN scan and SYN flood detection paths)
-- Alert Management Engine (`alert_manager.py` / `AlertManager` class supporting alert history, deduplication, and formatting)
-- AlertManager unit test suite (`test_alert_manager.py` with 7 test cases)
-- Integrated `AlertManager` into `test_capture.py` capture pipeline
+- Phase 8 — Alert Management Engine (`alert_manager.py` / `AlertManager` class supporting alert history, deduplication, and formatting)
+- Phase 9 — Statistics & Analytics (`statistics_manager.py` / `StatisticsManager` class supporting metrics aggregation, top source, top alert type, and summary statistics)
 
 ### In Progress
-- Phase 9 — Persistent Alert Logging & Storage
+- Phase 10 — Persistent Logging & Storage
 
 ### Not Yet Implemented
 - Persistent PCAP & Alert storage
 - User interface / Dashboard visualization
+
 
 
 
@@ -698,6 +702,108 @@ Status: SUCCESS
 ### Git Commit
 Commit: 9c2dadb9ca367fdf17a8db3e301090e60d0e6893
 Message: feat: add alert management
+
+---
+
+## 2026-10-08 — Statistics & Analytics
+
+### Objective
+Implement `StatisticsManager` in `statistics_manager.py` to aggregate real-time threat metrics, count alerts by type and source IP, identify top offending source IPs and top alert types, and generate comprehensive analytical summaries.
+
+### Architecture Role of StatisticsManager
+`StatisticsManager` operates downstream of `AlertManager`. In the packet capture pipeline (`test_capture.py`), `StatisticsManager.process(processed_alert)` is invoked ONLY when `AlertManager.process(alert)` returns a non-None accepted alert:
+
+```
+DetectionEngine → raw alert list → AlertManager.process() → accepted alert → StatisticsManager.process() & Console Print
+                                                        ↳ (rejected duplicate returns None, skipped by StatisticsManager)
+```
+
+### Relationship Between AlertManager and StatisticsManager
+- **`AlertManager`**: Responsible for alert deduplication (matching alert type + source IP) and human-readable string formatting.
+- **`StatisticsManager`**: Responsible for analytical aggregation. Because `StatisticsManager` receives only alerts accepted by `AlertManager`, duplicate alerts rejected by `AlertManager` are NOT counted in the statistical metrics, preventing skewed analytical totals.
+
+### Methods Implemented
+1. **`process(alert)`**: Stores non-None accepted alert dictionaries into internal list `self.alerts`. Ignores `None`.
+2. **`get_total_alerts()`**: Returns integer count of total accepted alerts stored.
+3. **`get_alerts_by_type()`**: Returns a dictionary mapping each alert type string to its occurrence count.
+4. **`get_alerts_by_source()`**: Returns a dictionary mapping each source IP address to its alert count.
+5. **`get_top_source()`**: Returns `{"source_ip": ip, "count": N}` for the source IP with the highest alert count, or `None` if no alerts exist.
+6. **`get_top_alert_type()`**: Returns `{"type": alert_type, "count": N}` for the alert type with the highest count, or `None` if no alerts exist.
+7. **`get_summary()`**: Returns a dictionary containing `total_alerts`, `alerts_by_type`, `alerts_by_source`, `top_source`, and `top_alert_type`.
+
+### Files Added / Modified
+- `statistics_manager.py` (New — `StatisticsManager` class implementation)
+- `test_statistics_manager.py` (New — Unit test suite with 10 test cases)
+- `test_statistics_integration.py` (New — Integration test suite with 3 test cases)
+- `test_capture.py` (Updated — Instantiated `statistics_manager` and connected to accepted alert loop)
+- `DEVELOPMENT_NOTES.md` (Updated — Architecture, status, and Change Log entry)
+
+### Test Coverage & Exact Results
+1. **Compilation Verification**:
+   ```bash
+   .venv/bin/python -m py_compile statistics_manager.py test_statistics_manager.py test_statistics_integration.py
+   ```
+   **Result**: Clean compilation, zero syntax errors.
+
+2. **AlertManager Unit Tests**:
+   ```bash
+   .venv/bin/python -m unittest test_alert_manager.py
+   ```
+   **Result**: 7/7 unit test cases passed in 0.000s (`OK`).
+
+3. **Parser Unit Tests**:
+   ```bash
+   .venv/bin/python test_packet_parser.py
+   ```
+   **Result**: 6/6 tests passed in 0.001s (`OK`).
+
+4. **SYN Scan Detector Unit Tests**:
+   ```bash
+   .venv/bin/python test_detection_engine.py
+   ```
+   **Result**: 5/5 SYN scan test scenarios passed.
+
+5. **SYN Flood Detector Unit Tests**:
+   ```bash
+   .venv/bin/python test_syn_flood_detector.py
+   ```
+   **Result**: 5/5 SYN flood test scenarios passed.
+
+6. **Unified Detection Engine Suite**:
+   ```bash
+   .venv/bin/python test_detection_engine_unified.py
+   ```
+   **Result**: Both SYN scan and SYN flood alerts triggered via `DetectionEngine`.
+
+7. **StatisticsManager Unit Tests**:
+   ```bash
+   .venv/bin/python -m unittest test_statistics_manager.py
+   ```
+   **Result**: 10/10 unit test cases passed in 0.000s (`OK`) (`test_none_alert_is_ignored`, `test_single_alert`, `test_multiple_alerts`, `test_alerts_by_type`, `test_alerts_by_source`, `test_top_source`, `test_top_alert_type`, `test_top_source_with_no_alerts`, `test_top_alert_type_with_no_alerts`, `test_summary`).
+
+8. **Statistics Integration Tests**:
+   ```bash
+   .venv/bin/python -m unittest test_statistics_integration.py
+   ```
+   **Result**: 3/3 integration test cases passed in 0.000s (`OK`) (`test_accepted_alert_is_counted`, `test_duplicate_alert_is_not_counted`, `test_different_alert_types_are_counted`).
+
+9. **Live Detection Integration Tests**:
+   - `test_live_detection.py`: Formatted TCP SYN port scan alert generated successfully.
+   - `test_syn_flood_integration.py`: Formatted TCP SYN flood alert generated successfully.
+
+### Result
+Status: SUCCESS
+
+### Limitations & Next Planned Phase
+- **In-Memory Analytics Only**: `StatisticsManager` maintains analytics in RAM (`self.alerts = []`). It does NOT provide persistent database or file log storage. State resets upon process termination.
+- **Synthetic Test Packets**: Integration tests (`test_live_detection.py`, `test_syn_flood_integration.py`) passed constructed Scapy packets directly through `packet_callback()`, NOT real malicious network attacks.
+- **Detection Unchanged**: Detection logic, thresholds (`SynScanDetector`: 5 ports / 10s; `SynFloodDetector`: 20 SYNs / 5s), and parser implementations were left 100% unchanged.
+- **Next Planned Phase**: **Phase 10 — Persistent Logging & Storage**.
+
+### Git Commit
+Commit: 1ad2c383195628b6716ed3c4bf5e1a743aec6ec5
+Message: feat: add statistics and analytics
+
 
 
 

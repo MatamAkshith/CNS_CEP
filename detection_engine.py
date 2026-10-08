@@ -1,5 +1,6 @@
 from syn_flood_detector import SynFloodDetector
 from udp_scan_detector import UdpScanDetector
+from icmp_sweep_detector import IcmpSweepDetector
 class SynScanDetector:
 
     def __init__(self, time_window=10, port_threshold=5):
@@ -73,6 +74,7 @@ class DetectionEngine:
             SynScanDetector(),
             SynFloodDetector(),
             UdpScanDetector(),
+            IcmpSweepDetector(),
         ]
 
     def analyze(self, packet):

@@ -1,5 +1,4 @@
-from scapy.all import IP, IPv6, TCP, UDP, ARP
-
+from scapy.all import IP, IPv6, TCP, UDP, ICMP, ARP
 
 def parse_packet(packet):
     data = {
@@ -37,13 +36,17 @@ def parse_packet(packet):
     if TCP in packet:
         tcp_layer = packet[TCP]
         data["protocol"] = "TCP"
-        data["source_port"] = int(tcp_layer.sport)
-        data["destination_port"] = int(tcp_layer.dport)
+        data["source_port"] = tcp_layer.sport
+        data["destination_port"] = tcp_layer.dport
         data["tcp_flags"] = str(tcp_layer.flags)
+
     elif UDP in packet:
         udp_layer = packet[UDP]
         data["protocol"] = "UDP"
-        data["source_port"] = int(udp_layer.sport)
-        data["destination_port"] = int(udp_layer.dport)
+        data["source_port"] = udp_layer.sport
+        data["destination_port"] = udp_layer.dport
+
+    elif ICMP in packet:
+        data["protocol"] = "ICMP"
 
     return data

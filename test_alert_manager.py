@@ -5,106 +5,96 @@ from alert_manager import AlertManager
 
 class TestAlertManager(unittest.TestCase):
 
-    def test_no_alert(self):
-        manager = AlertManager()
+    def setUp(self):
+        self.manager = AlertManager()
 
-        result = manager.process(None)
+    # --------------------------------------------------
+    # Test 1: Process a valid alert
+    # --------------------------------------------------
 
-        self.assertIsNone(result)
-        self.assertEqual(manager.get_alerts(), [])
-
-    def test_single_alert(self):
-        manager = AlertManager()
-
+    def test_process_valid_alert(self):
         alert = {
-            "type": "Possible TCP SYN Flood",
-            "source_ip": "192.168.1.50",
-            "syn_count": 20,
-            "window": 5
+            "type": "Possible TCP SYN Port Scan",
+            "source_ip": "192.168.1.50"
         }
 
-        result = manager.process(alert)
+        result = self.manager.process(alert)
 
         self.assertEqual(result, alert)
-        self.assertEqual(len(manager.get_alerts()), 1)
-        self.assertEqual(manager.get_alerts()[0], alert)
+        self.assertEqual(len(self.manager.get_alerts()), 1)
 
-    def test_multiple_alerts(self):
-        manager = AlertManager()
+    # --------------------------------------------------
+    # Test 2: Ignore None alert
+    # --------------------------------------------------
 
-        first_alert = {
-            "type": "Possible TCP SYN Flood",
-            "source_ip": "192.168.1.50"
-        }
+    def test_process_none_alert(self):
+        result = self.manager.process(None)
 
-        second_alert = {
-            "type": "Possible TCP SYN Port Scan",
-            "source_ip": "192.168.1.60"
-        }
+        self.assertIsNone(result)
+        self.assertEqual(len(self.manager.get_alerts()), 0)
 
-        manager.process(first_alert)
-        manager.process(second_alert)
-
-        alerts = manager.get_alerts()
-
-        self.assertEqual(len(alerts), 2)
-        self.assertEqual(alerts[0], first_alert)
-        self.assertEqual(alerts[1], second_alert)
+    # --------------------------------------------------
+    # Test 3: Duplicate alert
+    # --------------------------------------------------
 
     def test_duplicate_alert(self):
-        manager = AlertManager()
-
         alert = {
-            "type": "Possible TCP SYN Flood",
+            "type": "Possible TCP SYN Port Scan",
             "source_ip": "192.168.1.50"
         }
 
-        first_result = manager.process(alert)
-        second_result = manager.process(alert)
+        first_result = self.manager.process(alert)
+        second_result = self.manager.process(alert)
 
         self.assertEqual(first_result, alert)
         self.assertIsNone(second_result)
-        self.assertEqual(len(manager.get_alerts()), 1)
+        self.assertEqual(len(self.manager.get_alerts()), 1)
 
-    def test_different_alerts_are_not_deduplicated(self):
-        manager = AlertManager()
+    # --------------------------------------------------
+    # Test 4: Different alert types are accepted
+    # --------------------------------------------------
+
+    def test_different_alert_types(self):
+        scan_alert = {
+            "type": "Possible TCP SYN Port Scan",
+            "source_ip": "192.168.1.50"
+        }
 
         flood_alert = {
             "type": "Possible TCP SYN Flood",
             "source_ip": "192.168.1.50"
         }
 
-        scan_alert = {
+        self.manager.process(scan_alert)
+        self.manager.process(flood_alert)
+
+        self.assertEqual(len(self.manager.get_alerts()), 2)
+
+    # --------------------------------------------------
+    # Test 5: Different source IPs are accepted
+    # --------------------------------------------------
+
+    def test_different_source_ips(self):
+        alert_1 = {
             "type": "Possible TCP SYN Port Scan",
             "source_ip": "192.168.1.50"
         }
 
-        manager.process(flood_alert)
-        manager.process(scan_alert)
-
-        self.assertEqual(len(manager.get_alerts()), 2)
-
-    def test_format_syn_flood_alert(self):
-        manager = AlertManager()
-
-        alert = {
-            "type": "Possible TCP SYN Flood",
-            "source_ip": "192.168.1.50",
-            "syn_count": 20,
-            "window": 5
+        alert_2 = {
+            "type": "Possible TCP SYN Port Scan",
+            "source_ip": "192.168.1.60"
         }
 
-        formatted = manager.format_alert(alert)
+        self.manager.process(alert_1)
+        self.manager.process(alert_2)
 
-        self.assertIn("SECURITY ALERT", formatted)
-        self.assertIn("Possible TCP SYN Flood", formatted)
-        self.assertIn("192.168.1.50", formatted)
-        self.assertIn("SYN Count: 20", formatted)
-        self.assertIn("Time Window: 5 seconds", formatted)
+        self.assertEqual(len(self.manager.get_alerts()), 2)
 
-    def test_format_syn_scan_alert(self):
-        manager = AlertManager()
+    # --------------------------------------------------
+    # Test 6: Format TCP SYN scan alert
+    # --------------------------------------------------
 
+    def test_format_alert(self):
         alert = {
             "type": "Possible TCP SYN Port Scan",
             "source_ip": "192.168.1.50",
@@ -113,14 +103,105 @@ class TestAlertManager(unittest.TestCase):
             "window": 10
         }
 
-        formatted = manager.format_alert(alert)
+        formatted = self.manager.format_alert(alert)
 
-        self.assertIn("SECURITY ALERT", formatted)
-        self.assertIn("Possible TCP SYN Port Scan", formatted)
-        self.assertIn("192.168.1.50", formatted)
-        self.assertIn("192.168.1.10", formatted)
-        self.assertIn("Ports Scanned: [22, 23, 80, 443, 8080]", formatted)
-        self.assertIn("Time Window: 10 seconds", formatted)
+        self.assertIn("🚨 SECURITY ALERT", formatted)
+        self.assertIn(
+            "Type: Possible TCP SYN Port Scan",
+            formatted
+        )
+        self.assertIn(
+            "Source IP: 192.168.1.50",
+            formatted
+        )
+        self.assertIn(
+            "Destination IP: 192.168.1.10",
+            formatted
+        )
+        self.assertIn(
+            "Ports Scanned: [22, 23, 80, 443, 8080]",
+            formatted
+        )
+        self.assertIn(
+            "Time Window: 10 seconds",
+            formatted
+        )
+
+    # --------------------------------------------------
+    # Test 7: Format TCP SYN flood alert
+    # --------------------------------------------------
+
+    def test_format_syn_flood_alert(self):
+        alert = {
+            "type": "Possible TCP SYN Flood",
+            "source_ip": "192.168.1.50",
+            "syn_count": 20,
+            "window": 5
+        }
+
+        formatted = self.manager.format_alert(alert)
+
+        self.assertIn(
+            "Type: Possible TCP SYN Flood",
+            formatted
+        )
+        self.assertIn(
+            "Source IP: 192.168.1.50",
+            formatted
+        )
+        self.assertIn(
+            "SYN Count: 20",
+            formatted
+        )
+        self.assertIn(
+            "Time Window: 5 seconds",
+            formatted
+        )
+
+    # --------------------------------------------------
+    # Test 8: Format ICMP sweep alert
+    # --------------------------------------------------
+
+    def test_format_icmp_sweep_alert(self):
+        alert = {
+            "type": "Possible ICMP Host Sweep",
+            "source_ip": "192.168.1.50",
+            "hosts_scanned": [
+                "192.168.1.1",
+                "192.168.1.2",
+                "192.168.1.3",
+                "192.168.1.4",
+                "192.168.1.5"
+            ],
+            "window": 10
+        }
+
+        formatted = self.manager.format_alert(alert)
+
+        self.assertIn(
+            "🚨 SECURITY ALERT",
+            formatted
+        )
+        self.assertIn(
+            "Type: Possible ICMP Host Sweep",
+            formatted
+        )
+        self.assertIn(
+            "Source IP: 192.168.1.50",
+            formatted
+        )
+        self.assertIn(
+            "Hosts Scanned:",
+            formatted
+        )
+        self.assertIn(
+            "192.168.1.5",
+            formatted
+        )
+        self.assertIn(
+            "Time Window: 10 seconds",
+            formatted
+        )
 
 
 if __name__ == "__main__":

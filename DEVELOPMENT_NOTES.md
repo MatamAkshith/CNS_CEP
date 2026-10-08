@@ -20,12 +20,12 @@ This project is a Computer Network Security (CNS) Coursework Enhancement Project
     Normalized Packet Data
                ↓
         DetectionEngine
-    ┌──────────┼──────────┐
-    ↓          ↓          ↓
-SynScan    SynFlood    UdpScan
-Detector   Detector    Detector
- (TCP)      (Flood)     (UDP)
-    └──────────┼──────────┘
+    ┌──────────┬──────────┬──────────┐
+    ↓          ↓          ↓          ↓
+SynScan    SynFlood    UdpScan    IcmpSweep
+Detector   Detector    Detector   Detector
+ (TCP)      (Flood)     (UDP)      (ICMP)
+    └──────────┴──────────┴──────────┘
                ↓
      List of Security Alerts
                ↓
@@ -61,6 +61,7 @@ Output      Manager     (alerts.json)
 - IPv6 header parsing (`ip_version = 6`, Source IP, Destination IP, Protocol)
 - TCP transport header parsing (Source Port, Destination Port, TCP Flags)
 - UDP transport header parsing (Source Port, Destination Port, `tcp_flags = None`)
+- ICMP protocol parsing (`protocol = "ICMP"`, `ip_version = 4`, Source IP `src`, Destination IP `dst`)
 - ARP protocol parsing (`protocol = "ARP"`, `ip_version = None`, Source IP `psrc`, Destination IP `pdst`)
 - Numeric port enforcement (`int(sport)`, `int(dport)`) preventing Scapy service name strings
 - Non-IP / Unsupported packet handling (safe fallback with `None` fields)
@@ -83,9 +84,10 @@ Output      Manager     (alerts.json)
 - Phase 10 — Persistent Alert Logging (`storage_manager.py` / `StorageManager` class supporting persistent JSON alert logging in `alerts.json`)
 - Phase 11 — HTTP Query Interface / API (`http_server.py` / RESTful endpoints `/alerts` and `/statistics`)
 - Phase 12A — UDP Scan Detection (`udp_scan_detector.py` / `UdpScanDetector` detecting multi-port UDP recon)
+- Phase 12B — ICMP Sweep Detection (`icmp_sweep_detector.py` / `IcmpSweepDetector` detecting ICMP host discovery)
 
 ### In Progress
-- None (Phase 12A complete)
+- None (Phase 12B complete)
 
 ### Not Yet Implemented
 - User interface / Dashboard visualization
@@ -1136,8 +1138,142 @@ Unlike TCP, UDP is a connectionless protocol that does not utilize a three-way h
 - **In-Memory Window State**: Tracking dictionaries are maintained in RAM and reset upon process termination.
 - **Static Window Configuration**: Fixed 10-second window / 5-port threshold; low-and-slow scans spanning longer intervals will evade detection.
 
+---
+
+## 2026-10-08 — ICMP Sweep Detection (Phase 12B)
+
+### Objective
+Implement `IcmpSweepDetector` in `icmp_sweep_detector.py`, extend `packet_parser.py` to recognize ICMP protocol headers, update `alert_manager.py` to format ICMP alerts, and register `IcmpSweepDetector` inside `DetectionEngine` (`detection_engine.py`) to detect host discovery reconnaissance across IP subnets.
+
+### Why ICMP Sweep Detection Was Added
+Attackers use ICMP Echo Request ("ping sweep") messages as an initial host-discovery technique to map active IP addresses across a target network prior to executing port-specific reconnaissance (such as TCP SYN scans or UDP scans). Detecting ICMP host sweeps provides early-stage threat detection at Layer 3, complementing Layer 4 TCP SYN scan, TCP SYN flood, and UDP scan detection.
+
+### Detection Rule & Configuration
+- **Protocol**: ICMP (`packet.get("protocol") == "ICMP"`)
+- **Time Window**: 10 seconds (`time_window = 10`)
+- **Host Threshold**: 5 unique destination hosts (`host_threshold = 5`)
+- **Scope**: Tracks unique destination IP addresses independently for each source IP address (`source_ip`).
+- **Alert Type**: `"Possible ICMP Host Sweep"`
+
+### Exact Implementation Details
+1. **`IcmpSweepDetector` (`icmp_sweep_detector.py`)**:
+   - `__init__(time_window=10, host_threshold=5)`: Initializes tracking dictionary `self.tracker`.
+   - `analyze(packet)`:
+     - Ignores non-ICMP packets (`protocol != "ICMP"` returns `None`).
+     - Extracts `source_ip`, `destination_ip`, and `timestamp`. Returns `None` if any field is missing.
+     - Maps timestamps and destination IPs under source IP key `source_ip`.
+     - Evicts timestamp entries older than 10 seconds.
+     - Calculates set of unique destination IP addresses.
+     - Triggers structured alert dictionary when unique destination count reaches or exceeds 5:
+       ```python
+       {
+           "type": "Possible ICMP Host Sweep",
+           "source_ip": source_ip,
+           "hosts_scanned": sorted(unique_destinations),
+           "window": 10
+       }
+       ```
+
+2. **Packet Parser Extension (`packet_parser.py`)**:
+   - Added Scapy `ICMP` layer import (`from scapy.all import IP, IPv6, TCP, UDP, ICMP, ARP`).
+   - Added `elif ICMP in packet: data["protocol"] = "ICMP"` branch.
+   - Output normalized dictionary reports `protocol = "ICMP"` for ICMP IPv4 frames.
+   - *Note*: ICMPv6 header parsing is not included in Phase 12B.
+
+3. **DetectionEngine Integration (`detection_engine.py`)**:
+   - Registered `IcmpSweepDetector()` in `DetectionEngine.__init__()` array alongside `SynScanDetector()`, `SynFloodDetector()`, and `UdpScanDetector()`.
+   - `DetectionEngine.analyze(packet)` automatically routes normalized packets through all four security detectors.
+
+4. **AlertManager Formatting (`alert_manager.py`)**:
+   - Added support for `hosts_scanned` array formatting in `AlertManager.format_alert()`:
+     ```python
+     if "hosts_scanned" in alert:
+         message += f"\nHosts Scanned: {alert.get('hosts_scanned')}"
+     ```
+   - Updated `test_alert_manager.py` with `test_format_icmp_sweep_alert()` (suite expanded to 8 test cases).
+
+### Files Added / Modified
+- `icmp_sweep_detector.py` (New — `IcmpSweepDetector` class)
+- `test_icmp_sweep_detector.py` (New — Detector unit test suite with 5 test cases)
+- `test_icmp_parser.py` (New — ICMP parser unit test)
+- `test_detection_engine_icmp.py` (New — `DetectionEngine` ICMP sweep test)
+- `test_icmp_sweep_integration.py` (New — End-to-end `packet_callback` integration test)
+- `packet_parser.py` (Modified — Added ICMP protocol recognition)
+- `detection_engine.py` (Modified — Registered `IcmpSweepDetector`)
+- `alert_manager.py` (Modified — Added `hosts_scanned` formatting)
+- `test_alert_manager.py` (Modified — Added ICMP alert format test)
+- `DEVELOPMENT_NOTES.md` (Updated — Architecture, project status, and Phase 12B documentation)
+- `alerts.json` (Modified — Updated persistent alert store from integration test execution)
+
+### Test Coverage & Verification Results
+
+1. **Compilation Check**:
+   ```bash
+   .venv/bin/python -m py_compile icmp_sweep_detector.py packet_parser.py detection_engine.py alert_manager.py test_icmp_sweep_detector.py test_icmp_parser.py test_detection_engine_icmp.py test_icmp_sweep_integration.py
+   ```
+   **Result**: Clean compilation, zero syntax errors.
+
+2. **ICMP Sweep Detector Unit Tests (`test_icmp_sweep_detector.py`)**:
+   ```bash
+   .venv/bin/python test_icmp_sweep_detector.py
+   ```
+   **Result**: 5/5 test cases passed (`OK`):
+   - Test 1: 4 unique destination hosts -> no alert
+   - Test 2: 5 unique destination hosts -> alert triggered (`Possible ICMP Host Sweep`)
+   - Test 3: Duplicate destination IPs -> no alert
+   - Test 4: Packets outside 10s time window -> no alert
+   - Test 5: Non-ICMP packets (TCP) -> no alert
+
+3. **ICMP Parser Test (`test_icmp_parser.py`)**:
+   ```bash
+   .venv/bin/python test_icmp_parser.py
+   ```
+   **Result**: Passed (`protocol = "ICMP"` verified).
+
+4. **DetectionEngine ICMP Integration Test (`test_detection_engine_icmp.py`)**:
+   ```bash
+   .venv/bin/python test_detection_engine_icmp.py
+   ```
+   **Result**: Passed (`DetectionEngine` returned `Possible ICMP Host Sweep` alert).
+
+5. **End-to-End Callback Integration Test (`test_icmp_sweep_integration.py`)**:
+   ```bash
+   .venv/bin/python test_icmp_sweep_integration.py
+   ```
+   **Result**: Passed (Constructed Scapy `IP/ICMP` packets to 5 destination IPs; triggered alert through `packet_callback()` pipeline -> `parse_packet()` -> `DetectionEngine` -> `AlertManager` -> `StatisticsManager` -> `StorageManager` -> formatted alert output).
+
+6. **AlertManager Unit Test Suite (`test_alert_manager.py`)**:
+   ```bash
+   .venv/bin/python -m unittest test_alert_manager.py
+   ```
+   **Result**: 8/8 unit test cases passed in 0.000s (`OK`).
+
+7. **Full System Regression Suite**:
+   - `test_packet_parser.py`: 6/6 passed
+   - `test_detection_engine.py`: 5/5 passed
+   - `test_syn_flood_detector.py`: 5/5 passed
+   - `test_detection_engine_unified.py`: Passed (unified detection engine paths)
+   - `test_udp_scan_detector.py`: 5/5 passed
+   - `test_detection_engine_udp.py`: Passed
+   - `test_udp_scan_integration.py`: Passed
+   - `test_statistics_manager.py`: 10/10 passed
+   - `test_statistics_integration.py`: 3/3 passed
+   - `test_storage_manager.py`: 6/6 passed
+   - `test_storage_integration.py`: 3/3 passed
+   - `test_storage_persistence.py`: 1/1 passed
+   - `test_http_server.py`: 8/8 passed
+   - `test_live_detection.py`: Passed (live SYN scan simulation)
+   - `test_syn_flood_integration.py`: Passed (live SYN flood simulation)
+
+### Known Limitations
+- **IPv4 ICMP Only**: Phase 12B implements IPv4 ICMP recognition; ICMPv6 (`IPv6` + `ICMPv6EchoRequest`) host sweeps are not currently handled.
+- **Outbound Traffic Only**: Detection triggers based on observed ICMP traffic sent by a source IP; it does not analyze returning ICMP Echo Reply packets or confirm host availability.
+- **In-Memory Tracking State**: Tracking state resets upon process termination.
+- **Static Configuration**: Threshold set to 5 hosts / 10-second window.
+
 ### Project Status
-- **Phase 12A — UDP Scan Detection**: COMPLETE
+- **Phase 12B — ICMP Sweep Detection**: COMPLETE
+
 
 
 

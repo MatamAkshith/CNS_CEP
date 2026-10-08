@@ -1,10 +1,8 @@
 class AlertManager:
-
     def __init__(self):
         self.alerts = []
 
     def process(self, alert):
-
         if alert is None:
             return None
 
@@ -16,14 +14,12 @@ class AlertManager:
                 return None
 
         self.alerts.append(alert)
-
         return alert
 
     def get_alerts(self):
         return self.alerts
 
     def format_alert(self, alert):
-
         if alert is None:
             return None
 
@@ -41,6 +37,9 @@ class AlertManager:
 
         if "ports_scanned" in alert:
             message += f"\nPorts Scanned: {alert.get('ports_scanned')}"
+
+        if "hosts_scanned" in alert:
+            message += f"\nHosts Scanned: {alert.get('hosts_scanned')}"
 
         if "syn_count" in alert:
             message += f"\nSYN Count: {alert.get('syn_count')}"

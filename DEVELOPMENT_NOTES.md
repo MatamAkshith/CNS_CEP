@@ -35,10 +35,10 @@ SynScanDetector   SynFloodDetector
     └──────────┬──────────┘
                ↓
       Accepted Alert Stream
-    ┌──────────┴──────────┐
-    ↓                     ↓
-Console Output    StatisticsManager
-               (In-Memory Analytics)
+    ┌──────────┼──────────┐
+    ↓          ↓          ↓
+Console    Statistics   StorageManager
+Output      Manager     (alerts.json)
 ```
 
 ---
@@ -73,13 +73,14 @@ Console Output    StatisticsManager
 - Unified engine test suite (`test_detection_engine_unified.py` testing both SYN scan and SYN flood detection paths)
 - Phase 8 — Alert Management Engine (`alert_manager.py` / `AlertManager` class supporting alert history, deduplication, and formatting)
 - Phase 9 — Statistics & Analytics (`statistics_manager.py` / `StatisticsManager` class supporting metrics aggregation, top source, top alert type, and summary statistics)
+- Phase 10 — Persistent Alert Logging (`storage_manager.py` / `StorageManager` class supporting persistent JSON alert logging in `alerts.json`)
 
 ### In Progress
-- Phase 10 — Persistent Logging & Storage
+- None (Phase 10 complete)
 
 ### Not Yet Implemented
-- Persistent PCAP & Alert storage
 - User interface / Dashboard visualization
+- Web HTTP API server
 
 
 
@@ -800,9 +801,123 @@ Status: SUCCESS
 - **Detection Unchanged**: Detection logic, thresholds (`SynScanDetector`: 5 ports / 10s; `SynFloodDetector`: 20 SYNs / 5s), and parser implementations were left 100% unchanged.
 - **Next Planned Phase**: **Phase 10 — Persistent Logging & Storage**.
 
-### Git Commit
-Commit: 1ad2c383195628b6716ed3c4bf5e1a743aec6ec5
-Message: feat: add statistics and analytics
+---
+
+## 2026-10-08 — Persistent Alert Logging
+
+### Objective
+Implement `StorageManager` in `storage_manager.py` to provide JSON-based persistent storage for accepted security alerts, saving alerts to `alerts.json` so security alerts survive process termination.
+
+### Why JSON Persistence Was Selected
+JSON file storage was selected over a relational or NoSQL database (e.g., SQLite, PostgreSQL, MongoDB) because:
+1. **Zero External Dependencies**: Standard library `json` and `os` modules require no database server setup or driver installation.
+2. **Direct Schema Match**: Alerts are generated and manipulated as native Python dictionary data structures, which serialize cleanly to JSON objects.
+3. **Human-Readable & Inspection-Friendly**: Security administrators can open `alerts.json` in any text editor to audit detected threats.
+4. **Scope-Appropriate**: Ideal for a coursework enhancement project (CEP) packet sniffer without adding heavy database daemon management overhead.
+
+### Phase 10 Architecture & Workflow
+`StorageManager` operates in parallel with `StatisticsManager` downstream of `AlertManager`:
+
+```
+Scapy sniff() → packet_callback() → parse_packet() → DetectionEngine
+                                                          ↓
+                                                     Raw Alerts
+                                                          ↓
+                                                 AlertManager.process()
+                                                          ↓
+                                                   Accepted Alert
+                                            ┌─────────────┼─────────────┐
+                                            ↓             ↓             ↓
+                                      Console Output  Statistics   StorageManager
+                                                       Manager     (alerts.json)
+```
+
+### StorageManager Responsibilities
+- **`__init__(file_path="alerts.json")`**: Configures target storage file and triggers initialization.
+- **`_initialize_storage()`**: Creates the storage file containing an empty JSON array (`[]`) if it does not already exist.
+- **`load_alerts()`**: Reads and deserializes JSON content from `alerts.json`, returning a list of alert dictionaries.
+- **`save_alerts(alerts)`**: Serializes and writes a complete list of alert dictionaries to `alerts.json` with 4-space indent formatting.
+- **`save_alert(alert)`**: Appends a single newly accepted alert to existing stored alerts and persists the updated array to disk.
+
+### `alerts.json` Structure
+```json
+[
+    {
+        "type": "Possible TCP SYN Port Scan",
+        "source_ip": "192.168.1.50",
+        "destination_ip": "192.168.1.10",
+        "ports_scanned": [22, 23, 80, 443, 8080],
+        "window": 10
+    },
+    {
+        "type": "Possible TCP SYN Flood",
+        "source_ip": "192.168.1.50",
+        "syn_count": 20,
+        "window": 5
+    }
+]
+```
+
+### AlertManager → StatisticsManager / StorageManager Flow
+`AlertManager.process(alert)` acts as the gatekeeper:
+- If an alert is a duplicate, `AlertManager` returns `None`. The live capture loop skips `None` alerts, so duplicates are neither passed to `StatisticsManager` nor written to `alerts.json` by `StorageManager`.
+- If an alert is new/accepted, `AlertManager` returns the alert. The live capture loop passes it to `StatisticsManager.process(processed_alert)`, writes it via `storage_manager.save_alert(processed_alert)`, and prints the formatted string to the console.
+
+### Files Created / Modified
+- `storage_manager.py` (New — `StorageManager` class implementation)
+- `test_storage_manager.py` (New — Unit test suite with 6 test cases)
+- `test_storage_integration.py` (New — Integration test suite with 3 test cases)
+- `test_storage_persistence.py` (New — Persistence verification test)
+- `test_capture.py` (Updated — Instantiated `StorageManager` and integrated `save_alert` call)
+- `DEVELOPMENT_NOTES.md` (Updated — Architecture, project status, and Phase 10 documentation entry)
+
+### Test Coverage & Results
+1. **Compilation Verification**:
+   ```bash
+   .venv/bin/python -m py_compile storage_manager.py test_capture.py
+   ```
+   **Result**: Clean compilation, zero syntax errors.
+
+2. **StorageManager Unit Tests (`test_storage_manager.py`)**:
+   ```bash
+   .venv/bin/python -m unittest test_storage_manager.py
+   ```
+   **Result**: 6/6 unit test cases passed in 0.002s (`OK`) (`test_storage_file_is_created`, `test_new_storage_is_empty`, `test_save_and_load_alerts`, `test_multiple_alerts`, `test_save_single_alert`, `test_save_multiple_alerts_individually`).
+
+3. **Storage Integration Tests (`test_storage_integration.py`)**:
+   ```bash
+   .venv/bin/python -m unittest test_storage_integration.py
+   ```
+   **Result**: 3/3 integration test cases passed in 0.001s (`OK`) (`test_accepted_alert_is_stored`, `test_duplicate_alert_is_not_stored`, `test_different_alerts_are_stored`).
+
+4. **Storage Persistence Verification (`test_storage_persistence.py`)**:
+   ```bash
+   .venv/bin/python -m unittest test_storage_persistence.py
+   ```
+   **Result**: 1/1 persistence test case passed in 0.001s (`OK`) (`test_alerts_survive_new_storage_manager`).
+
+5. **Full System Regression**:
+   - `test_alert_manager.py`: 7/7 passed
+   - `test_packet_parser.py`: 6/6 passed
+   - `test_detection_engine.py`: 5/5 passed
+   - `test_syn_flood_detector.py`: 5/5 passed
+   - `test_detection_engine_unified.py`: Passed (unified SYN scan & flood detection paths)
+   - `test_statistics_manager.py`: 10/10 passed
+   - `test_statistics_integration.py`: 3/3 passed
+   - `test_live_detection.py`: Passed (TCP SYN port scan alert generated)
+   - `test_syn_flood_integration.py`: Passed (TCP SYN flood alert generated)
+
+### Persistence Verification Result
+Verified that alerts written to disk by an initial `StorageManager` instance persist cleanly in `alerts.json` and are loaded intact by a separate, newly instantiated `StorageManager` object across process boundary simulation.
+
+### Known Limitations
+- **Course Project Scope**: JSON file storage is designed for lightweight coursework deployment. It is not intended for high-throughput production network monitoring.
+- **No Concurrent Write Lock**: `StorageManager` performs full file reads/writes without file-locking mechanisms (`fcntl` or mutexes). Simultaneous writes from multiple processes could cause race conditions.
+- **No Indexing / Query Optimization**: Filtering or searching stored alerts requires reading the entire JSON array into memory.
+
+### Project Status
+- **Phase 10 — Persistent Alert Logging**: COMPLETE
+
 
 
 

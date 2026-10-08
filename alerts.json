@@ -1,0 +1,59 @@
+[
+    {
+        "type": "Possible TCP SYN Port Scan",
+        "source_ip": "192.168.1.50",
+        "destination_ip": "192.168.1.10",
+        "ports_scanned": [
+            22,
+            23,
+            80,
+            443,
+            8080
+        ],
+        "window": 10
+    },
+    {
+        "type": "Possible TCP SYN Flood",
+        "source_ip": "192.168.1.50",
+        "syn_count": 20,
+        "window": 5
+    },
+    {
+        "type": "Possible TCP SYN Port Scan",
+        "source_ip": "192.168.1.50",
+        "destination_ip": "192.168.1.10",
+        "ports_scanned": [
+            22,
+            23,
+            80,
+            443,
+            8080
+        ],
+        "window": 10
+    },
+    {
+        "type": "Possible TCP SYN Flood",
+        "source_ip": "192.168.1.50",
+        "syn_count": 20,
+        "window": 5
+    },
+    {
+        "type": "Possible TCP SYN Port Scan",
+        "source_ip": "192.168.1.50",
+        "destination_ip": "192.168.1.10",
+        "ports_scanned": [
+            22,
+            23,
+            80,
+            443,
+            8080
+        ],
+        "window": 10
+    },
+    {
+        "type": "Possible TCP SYN Flood",
+        "source_ip": "192.168.1.50",
+        "syn_count": 20,
+        "window": 5
+    }
+]

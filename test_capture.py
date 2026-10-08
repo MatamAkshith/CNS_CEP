@@ -1,6 +1,7 @@
 from detection_engine import DetectionEngine
 from alert_manager import AlertManager
 from statistics_manager import StatisticsManager
+from storage_manager import StorageManager
 from scapy.all import sniff
 from packet_parser import parse_packet
 
@@ -8,6 +9,7 @@ from packet_parser import parse_packet
 detection_engine = DetectionEngine()
 alert_manager = AlertManager()
 statistics_manager = StatisticsManager()
+storage_manager = StorageManager()
 
 
 def packet_callback(packet):
@@ -23,6 +25,8 @@ def packet_callback(packet):
         if processed_alert:
 
             statistics_manager.process(processed_alert)
+
+            storage_manager.save_alert(processed_alert)
 
             print(alert_manager.format_alert(processed_alert))
 

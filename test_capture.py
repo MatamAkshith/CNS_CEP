@@ -1,3 +1,5 @@
+import os
+import tempfile
 from detection_engine import DetectionEngine
 from alert_manager import AlertManager
 from statistics_manager import StatisticsManager
@@ -9,7 +11,10 @@ from packet_parser import parse_packet
 detection_engine = DetectionEngine()
 alert_manager = AlertManager()
 statistics_manager = StatisticsManager()
-storage_manager = StorageManager()
+
+_temp_storage_path = os.path.join(tempfile.gettempdir(), "test_capture_alerts.json")
+storage_manager = StorageManager(_temp_storage_path)
+
 
 
 def packet_callback(packet):

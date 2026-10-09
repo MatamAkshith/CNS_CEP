@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 import threading
 import unittest
 from http.client import HTTPConnection
@@ -10,12 +11,19 @@ import http_server
 
 class TestHTTPServer(unittest.TestCase):
 
-    test_file = "test_http_alerts.json"
+    temp_dir = None
+    test_file = None
     server = None
     thread = None
 
     @classmethod
     def setUpClass(cls):
+
+        cls.temp_dir = tempfile.TemporaryDirectory()
+        cls.test_file = os.path.join(
+            cls.temp_dir.name,
+            "test_http_alerts.json"
+        )
 
         test_alerts = [
             {
@@ -64,9 +72,10 @@ class TestHTTPServer(unittest.TestCase):
         cls.server.shutdown()
         cls.server.server_close()
         cls.thread.join()
+        if cls.temp_dir:
+            cls.temp_dir.cleanup()
+        http_server.storage_manager = http_server.StorageManager()
 
-        if os.path.exists(cls.test_file):
-            os.remove(cls.test_file)
 
     def get(self, path):
 

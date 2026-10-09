@@ -1,4 +1,5 @@
 import os
+import tempfile
 import unittest
 
 from alert_manager import AlertManager
@@ -7,17 +8,14 @@ from storage_manager import StorageManager
 
 class TestStorageIntegration(unittest.TestCase):
 
-    test_file = "test_alerts.json"
-
     def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.test_file = os.path.join(
+            self.temp_dir.name,
+            "test_alerts.json"
+        )
+        self.addCleanup(self.temp_dir.cleanup)
 
-        if os.path.exists(self.test_file):
-            os.remove(self.test_file)
-
-    def tearDown(self):
-
-        if os.path.exists(self.test_file):
-            os.remove(self.test_file)
 
     def test_accepted_alert_is_stored(self):
 

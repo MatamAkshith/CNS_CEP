@@ -87,12 +87,13 @@ Detector   Detector    Detector   Detector
 - Phase 12A — UDP Scan Detection (`udp_scan_detector.py` / `UdpScanDetector` detecting multi-port UDP recon)
 - Phase 12B — ICMP Sweep Detection (`icmp_sweep_detector.py` / `IcmpSweepDetector` detecting ICMP host discovery)
 - Phase 13.1 — Application Entry Point / Capture Pipeline (`main.py` standalone production application launcher)
+- Phase 14.1 — Web Monitoring Dashboard (`http_server.py` browser-accessible monitoring dashboard)
 
 ### In Progress
-- None (Phase 13.1 complete)
+- None (Phase 14.1 complete)
 
 ### Not Yet Implemented
-- User interface / Dashboard visualization
+- None
 
 
 
@@ -1387,6 +1388,104 @@ The implementation intentionally remained minimal and pragmatic:
 
 ### Project Status
 - **Phase 13.1 — Application Entry Point / Capture Pipeline**: COMPLETE
+
+---
+
+## 2026-10-09 — Web Monitoring Dashboard (Phase 14.1)
+
+### Objective
+- Add a browser-accessible monitoring dashboard to the existing HTTP server.
+- Provide a human-readable view of stored security alerts and statistics.
+
+### Dashboard Endpoint
+- Added `GET /` endpoint to `http_server.py`.
+- Returns HTML (`text/html; charset=utf-8`) instead of JSON.
+- Dashboard displays:
+  - Total alerts
+  - Top source
+  - Top alert type
+  - Alerts by type
+  - Recent alerts (up to 10 most recent alerts)
+  - Source IP
+  - Destination IP where available
+
+### Architecture
+```
+alerts.json
+     ↓
+StorageManager
+     ↓
+StatisticsManager
+     ↓
+HTTP Server
+     ↓
+GET /
+     ↓
+HTML Monitoring Dashboard
+```
+
+### Implementation
+- Added `send_html_response(self, status_code, html)` helper method to `RequestHandler` in `http_server.py` to deliver HTML responses with appropriate `Content-Type: text/html; charset=utf-8` and `Content-Length` headers.
+- Added `generate_dashboard(self)` method to `RequestHandler` to load alerts from `StorageManager`, calculate analytical metrics using `StatisticsManager`, and construct a clean HTML/CSS webpage layout.
+- Added `GET /` request handling logic in `do_GET()` to invoke `generate_dashboard()` and send HTML output with `200 OK` (returning `400 Bad Request` if query parameters are passed to `/`).
+- Existing JSON API endpoints `/alerts` and `/statistics` remain available and supported.
+- No external frontend framework was introduced.
+- Dashboard uses Python standard library HTTP server (`http.server`) and generated HTML/CSS.
+
+### Existing API Preservation
+The following RESTful JSON API endpoints remain supported:
+- `GET /alerts` — Returns list of all persisted security alerts.
+- `GET /alerts?type=...` — Filters alerts by alert type.
+- `GET /alerts?source_ip=...` — Filters alerts by source IP address.
+- `GET /alerts?type=...&source_ip=...` — Filters alerts by both type and source IP.
+- `GET /statistics` — Returns summary statistics object (`total_alerts`, `alerts_by_type`, `alerts_by_source`, `top_source`, `top_alert_type`).
+
+Existing query parameter validation behavior remains unchanged: invalid query parameters return `400 Bad Request`, and unknown URL paths return `404 Not Found`.
+
+### Testing
+- `py_compile http_server.py` passed with zero syntax errors.
+- HTTP server started successfully on `http://localhost:8000`.
+- `GET /` returned HTTP 200 OK with formatted HTML output.
+- Full HTTP API test suite (`test_http_server.py`): 8/8 passed.
+- Full project regression test suite:
+  ```bash
+  .venv/bin/python -m unittest discover
+  ```
+  Result:
+  ```text
+  Ran 45 tests in 0.528s
+  OK
+  ```
+
+### Live Dashboard Verification
+Verified in the browser that the monitoring dashboard successfully displayed using real persisted alert data from `alerts.json`, including:
+- Total alerts count
+- Alerts by type table
+- Top source IP with alert count
+- Top alert type with occurrence count
+- Recent alerts table showing Alert Type, Source IP, and Destination IP (where available)
+
+### Design Decisions
+- **No External Frameworks**: No React, Vue, Flask, Node.js, or external frontend framework.
+- **Python Standard Library**: Uses existing Python standard library HTTP server (`http.server`, `urllib.parse`, `json`).
+- **Component Reuse**: Reuses existing `StorageManager` for alert storage and `StatisticsManager` for analytical summaries.
+- **No New Dependencies**: No new database or dependency introduced.
+- **Scope Appropriate**: Dashboard is intentionally simple, clean, and appropriate for the CEP course project scope.
+
+### Limitations
+- **Static Page Load**: Dashboard is currently static after page load; browser refresh is required to see newly generated alerts.
+- **No Authentication**: No authentication or authorization features.
+- **No Real-Time Push**: No real-time WebSocket/SSE functionality.
+- **No Favicon**: No favicon was added; browser favicon request may return 404 and is harmless.
+
+### Files
+- `http_server.py` modified (added HTML dashboard generation and `GET /` handling)
+- `DEVELOPMENT_NOTES.md` modified (updated status and added Phase 14.1 entry)
+- `alerts.json` modified (appended test alert records during test execution)
+
+### Final Status
+- **Phase 14.1 — Web Monitoring Dashboard**: COMPLETE
+
 
 
 

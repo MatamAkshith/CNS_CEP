@@ -1,6 +1,9 @@
 class AlertManager:
-    def __init__(self):
+    def __init__(self, initial_alerts=None):
         self.alerts = []
+        if initial_alerts:
+            for alert in initial_alerts:
+                self.process(alert)
 
     def process(self, alert):
         if alert is None:

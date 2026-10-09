@@ -591,5 +591,18 @@
             500
         ],
         "window": 10
+    },
+    {
+        "type": "Possible UDP Port Scan",
+        "source_ip": "2409:40f0:442e:65d3::7c",
+        "destination_ip": "2409:40f0:442e:65d3:30b5:9b44:db96:a2da",
+        "ports_scanned": [
+            54633,
+            55683,
+            61259,
+            61359,
+            62797
+        ],
+        "window": 10
     }
 ]

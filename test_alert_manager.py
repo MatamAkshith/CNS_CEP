@@ -203,6 +203,37 @@ class TestAlertManager(unittest.TestCase):
             formatted
         )
 
+    # --------------------------------------------------
+    # Test 9: Initial alerts seeding deduplicates future alerts
+    # --------------------------------------------------
+
+    def test_initial_alerts_deduplication(self):
+        initial = [
+            {
+                "type": "Possible TCP SYN Port Scan",
+                "source_ip": "192.168.1.50"
+            }
+        ]
+
+        seeded_manager = AlertManager(initial)
+        self.assertEqual(len(seeded_manager.get_alerts()), 1)
+
+        # Duplicate alert should be rejected
+        duplicate_result = seeded_manager.process({
+            "type": "Possible TCP SYN Port Scan",
+            "source_ip": "192.168.1.50"
+        })
+        self.assertIsNone(duplicate_result)
+        self.assertEqual(len(seeded_manager.get_alerts()), 1)
+
+        # New alert type should be accepted
+        new_result = seeded_manager.process({
+            "type": "Possible UDP Port Scan",
+            "source_ip": "192.168.1.50"
+        })
+        self.assertIsNotNone(new_result)
+        self.assertEqual(len(seeded_manager.get_alerts()), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

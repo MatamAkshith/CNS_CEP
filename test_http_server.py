@@ -77,7 +77,7 @@ class TestHTTPServer(unittest.TestCase):
         http_server.storage_manager = http_server.StorageManager()
 
 
-    def get(self, path):
+    def get_raw(self, path):
 
         connection = HTTPConnection(
             "localhost",
@@ -92,10 +92,36 @@ class TestHTTPServer(unittest.TestCase):
         response = connection.getresponse()
 
         body = response.read().decode("utf-8")
+        headers = dict(response.getheaders())
 
         connection.close()
 
-        return response.status, json.loads(body)
+        return response.status, body, headers
+
+    def get(self, path):
+
+        status, body, _ = self.get_raw(path)
+
+        return status, json.loads(body)
+
+    def test_root_dashboard(self):
+
+        status, body, headers = self.get_raw("/")
+
+        self.assertEqual(status, 200)
+        self.assertIn("text/html", headers.get("Content-Type", ""))
+        self.assertIn("<!DOCTYPE html>", body)
+        self.assertIn("Network Security Monitor", body)
+
+    def test_root_query_parameter(self):
+
+        status, data = self.get("/?foo=bar")
+
+        self.assertEqual(status, 400)
+        self.assertEqual(
+            data["error"],
+            "Query parameters are not supported for /"
+        )
 
     def test_get_all_alerts(self):
 
@@ -181,6 +207,55 @@ class TestHTTPServer(unittest.TestCase):
             data["error"],
             "Query parameters are not supported for /statistics"
         )
+
+    def test_capture_status_endpoint(self):
+
+        status, data = self.get("/capture_status")
+
+        self.assertEqual(status, 200)
+        self.assertIn("status", data)
+        self.assertIn("is_active", data)
+        self.assertIn("total_packets", data)
+        self.assertIn("recent_packets", data)
+
+    def test_packets_endpoint(self):
+
+        status, data = self.get("/packets")
+
+        self.assertEqual(status, 200)
+        self.assertIsInstance(data, list)
+
+    def test_capture_status_query_parameter(self):
+
+        status, data = self.get("/capture_status?foo=bar")
+
+        self.assertEqual(status, 400)
+        self.assertEqual(
+            data["error"],
+            "Query parameters are not supported for /capture_status"
+        )
+
+    def test_packets_query_parameter(self):
+
+        status, data = self.get("/packets?foo=bar")
+
+        self.assertEqual(status, 400)
+        self.assertEqual(
+            data["error"],
+            "Query parameters are not supported for /packets"
+        )
+
+    def test_dashboard_root_endpoint(self):
+
+        connection = HTTPConnection("localhost", 8001)
+        connection.request("GET", "/")
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+        connection.close()
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("<!DOCTYPE html>", body)
+        self.assertIn("Network Security Monitor", body)
 
 
 if __name__ == "__main__":

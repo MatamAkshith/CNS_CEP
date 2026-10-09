@@ -4,22 +4,26 @@ from detection_engine import DetectionEngine
 from alert_manager import AlertManager
 from statistics_manager import StatisticsManager
 from storage_manager import StorageManager
+from capture_state import capture_state_manager
 from scapy.all import sniff
 from packet_parser import parse_packet
 
 
-detection_engine = DetectionEngine()
-alert_manager = AlertManager()
-statistics_manager = StatisticsManager()
-
 _temp_storage_path = os.path.join(tempfile.gettempdir(), "test_capture_alerts.json")
 storage_manager = StorageManager(_temp_storage_path)
+
+detection_engine = DetectionEngine()
+alert_manager = AlertManager(storage_manager.load_alerts())
+statistics_manager = StatisticsManager()
+
 
 
 
 def packet_callback(packet):
 
     parsed_packet = parse_packet(packet)
+
+    capture_state_manager.record_packet(parsed_packet)
 
     alerts = detection_engine.analyze(parsed_packet)
 
@@ -51,7 +55,15 @@ if __name__ == "__main__":
     print("Starting live packet capture...")
     print("Press Ctrl+C to stop.")
 
+    capture_state_manager.start_capture()
+
     try:
         sniff(prn=packet_callback)
     except KeyboardInterrupt:
         print("\nPacket capture stopped cleanly.")
+        capture_state_manager.stop_capture()
+    except Exception as e:
+        capture_state_manager.fail_capture(str(e))
+        raise
+    else:
+        capture_state_manager.stop_capture()

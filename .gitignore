@@ -20,3 +20,6 @@ __pycache__/
 
 # Logs
 *.log
+
+# Runtime capture state
+*capture_state*.json*

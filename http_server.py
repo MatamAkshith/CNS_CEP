@@ -1,6 +1,7 @@
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 from urllib.parse import urlparse, parse_qs
+from html import escape
 
 from storage_manager import StorageManager
 from statistics_manager import StatisticsManager
@@ -17,7 +18,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_response(status_code)
         self.send_header(
             "Content-Type",
-            "application/json"
+            "application/json; charset=utf-8"
         )
         self.send_header(
             "Content-Length",
@@ -79,7 +80,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         for alert_type, count in alerts_by_type.items():
             alert_type_rows += f"""
                 <tr>
-                    <td>{alert_type}</td>
+                    <td>{escape(str(alert_type))}</td>
                     <td>{count}</td>
                 </tr>
             """
@@ -90,11 +91,17 @@ class RequestHandler(BaseHTTPRequestHandler):
         recent_alert_rows = ""
 
         for alert in recent_alerts:
+            alert_type = escape(str(alert.get("type", "Unknown")))
+            source_ip = escape(str(alert.get("source_ip", "Unknown")))
+            destination_ip = escape(
+                str(alert.get("destination_ip", "N/A"))
+            )
+
             recent_alert_rows += f"""
                 <tr>
-                    <td>{alert.get('type', 'Unknown')}</td>
-                    <td>{alert.get('source_ip', 'Unknown')}</td>
-                    <td>{alert.get('destination_ip', 'N/A')}</td>
+                    <td>{alert_type}</td>
+                    <td>{source_ip}</td>
+                    <td>{destination_ip}</td>
                 </tr>
             """
 
@@ -115,6 +122,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         html = f"""
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -127,15 +135,25 @@ class RequestHandler(BaseHTTPRequestHandler):
             margin: 0;
             padding: 30px;
             background: #f4f6f8;
+            color: #222;
         }}
 
         h1 {{
-            margin-bottom: 30px;
+            margin-bottom: 10px;
+        }}
+
+        .status {{
+            margin-bottom: 25px;
+            color: #555;
+        }}
+
+        #dashboard-status {{
+            font-weight: bold;
         }}
 
         .cards {{
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 20px;
             margin-bottom: 30px;
         }}
@@ -145,6 +163,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             padding: 20px;
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            overflow-wrap: anywhere;
         }}
 
         .card h3 {{
@@ -153,7 +172,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         }}
 
         .value {{
-            font-size: 24px;
+            font-size: 22px;
             font-weight: bold;
         }}
 
@@ -169,6 +188,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             padding: 12px;
             border-bottom: 1px solid #ddd;
             text-align: left;
+            overflow-wrap: anywhere;
         }}
 
         th {{
@@ -178,6 +198,25 @@ class RequestHandler(BaseHTTPRequestHandler):
         .section {{
             margin-bottom: 30px;
         }}
+
+        @media (max-width: 800px) {{
+            body {{
+                padding: 15px;
+            }}
+
+            .cards {{
+                grid-template-columns: 1fr;
+            }}
+
+            table {{
+                font-size: 14px;
+            }}
+
+            th,
+            td {{
+                padding: 8px;
+            }}
+        }}
     </style>
 </head>
 
@@ -185,67 +224,205 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     <h1>Network Security Monitor</h1>
 
+    <p class="status">
+        Dashboard Status:
+        <span id="dashboard-status">Connecting...</span>
+    </p>
+
     <div class="cards">
 
         <div class="card">
             <h3>Total Alerts</h3>
-            <div class="value">
+            <div class="value" id="total-alerts">
                 {total_alerts}
             </div>
         </div>
 
         <div class="card">
             <h3>Top Source</h3>
-            <div class="value">
-                {top_source_text}
+            <div class="value" id="top-source">
+                {escape(top_source_text)}
             </div>
         </div>
 
         <div class="card">
             <h3>Top Alert Type</h3>
-            <div class="value">
-                {top_alert_text}
+            <div class="value" id="top-alert-type">
+                {escape(top_alert_text)}
             </div>
         </div>
 
     </div>
-
 
     <div class="section">
 
         <h2>Alerts by Type</h2>
 
         <table>
+            <thead>
+                <tr>
+                    <th>Alert Type</th>
+                    <th>Count</th>
+                </tr>
+            </thead>
 
-            <tr>
-                <th>Alert Type</th>
-                <th>Count</th>
-            </tr>
-
-            {alert_type_rows}
-
+            <tbody id="alerts-by-type">
+                {alert_type_rows}
+            </tbody>
         </table>
 
     </div>
-
 
     <div class="section">
 
         <h2>Recent Alerts</h2>
 
         <table>
+            <thead>
+                <tr>
+                    <th>Alert Type</th>
+                    <th>Source IP</th>
+                    <th>Destination IP</th>
+                </tr>
+            </thead>
 
-            <tr>
-                <th>Alert Type</th>
-                <th>Source IP</th>
-                <th>Destination IP</th>
-            </tr>
-
-            {recent_alert_rows}
-
+            <tbody id="recent-alerts">
+                {recent_alert_rows}
+            </tbody>
         </table>
 
     </div>
+
+    <script>
+        async function refreshDashboard() {{
+            const statusElement = document.getElementById(
+                "dashboard-status"
+            );
+
+            try {{
+                const responses = await Promise.all([
+                    fetch("/statistics", {{ cache: "no-store" }}),
+                    fetch("/alerts", {{ cache: "no-store" }})
+                ]);
+
+                if (!responses.every(response => response.ok)) {{
+                    throw new Error("Unable to retrieve dashboard data");
+                }}
+
+                const statistics = await responses[0].json();
+                const alerts = await responses[1].json();
+
+                document.getElementById(
+                    "total-alerts"
+                ).textContent = statistics.total_alerts;
+
+                const topSource = statistics.top_source;
+
+                document.getElementById(
+                    "top-source"
+                ).textContent = topSource
+                    ? `${{topSource.source_ip}} (${{topSource.count}} alerts)`
+                    : "None";
+
+                const topAlertType = statistics.top_alert_type;
+
+                document.getElementById(
+                    "top-alert-type"
+                ).textContent = topAlertType
+                    ? `${{topAlertType.type}} (${{topAlertType.count}} alerts)`
+                    : "None";
+
+                const alertTypeBody = document.getElementById(
+                    "alerts-by-type"
+                );
+
+                alertTypeBody.replaceChildren();
+
+                const alertTypes = Object.entries(
+                    statistics.alerts_by_type
+                );
+
+                if (alertTypes.length === 0) {{
+                    const row = document.createElement("tr");
+                    const cell = document.createElement("td");
+
+                    cell.colSpan = 2;
+                    cell.textContent = "No alerts recorded";
+
+                    row.appendChild(cell);
+                    alertTypeBody.appendChild(row);
+                }} else {{
+                    for (const [type, count] of alertTypes) {{
+                        const row = document.createElement("tr");
+                        const typeCell = document.createElement("td");
+                        const countCell = document.createElement("td");
+
+                        typeCell.textContent = type;
+                        countCell.textContent = count;
+
+                        row.appendChild(typeCell);
+                        row.appendChild(countCell);
+
+                        alertTypeBody.appendChild(row);
+                    }}
+                }}
+
+                const recentAlertsBody = document.getElementById(
+                    "recent-alerts"
+                );
+
+                recentAlertsBody.replaceChildren();
+
+                const recentAlerts = alerts.slice(-10).reverse();
+
+                if (recentAlerts.length === 0) {{
+                    const row = document.createElement("tr");
+                    const cell = document.createElement("td");
+
+                    cell.colSpan = 3;
+                    cell.textContent = "No alerts recorded";
+
+                    row.appendChild(cell);
+                    recentAlertsBody.appendChild(row);
+                }} else {{
+                    for (const alert of recentAlerts) {{
+                        const row = document.createElement("tr");
+
+                        const typeCell = document.createElement("td");
+                        const sourceCell = document.createElement("td");
+                        const destinationCell = document.createElement("td");
+
+                        typeCell.textContent = alert.type || "Unknown";
+                        sourceCell.textContent = alert.source_ip || "Unknown";
+                        destinationCell.textContent =
+                            alert.destination_ip || "N/A";
+
+                        row.appendChild(typeCell);
+                        row.appendChild(sourceCell);
+                        row.appendChild(destinationCell);
+
+                        recentAlertsBody.appendChild(row);
+                    }}
+                }}
+
+                statusElement.textContent =
+                    "Connected — last updated " +
+                    new Date().toLocaleTimeString();
+
+            }} catch (error) {{
+                statusElement.textContent =
+                    "Connection error — retrying";
+
+                console.error(
+                    "Dashboard refresh failed:",
+                    error
+                );
+            }}
+        }}
+
+        refreshDashboard();
+        setInterval(refreshDashboard, 3000);
+    </script>
 
 </body>
 </html>
@@ -254,9 +431,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         return html
 
     def do_GET(self):
-
         try:
-
             parsed_url = urlparse(self.path)
 
             path = parsed_url.path
@@ -268,7 +443,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self.send_json_response(
                         400,
                         {
-                            "error": "Query parameters are not supported for /"
+                            "error":
+                            "Query parameters are not supported for /"
                         }
                     )
                     return
@@ -290,7 +466,6 @@ class RequestHandler(BaseHTTPRequestHandler):
                 unsupported_parameters = set(query) - allowed_parameters
 
                 if unsupported_parameters:
-
                     self.send_json_response(
                         400,
                         {
@@ -300,13 +475,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                             )
                         }
                     )
-
                     return
 
                 alerts = storage_manager.load_alerts()
 
                 if "type" in query:
-
                     alert_type = query["type"][0]
 
                     alerts = [
@@ -316,7 +489,6 @@ class RequestHandler(BaseHTTPRequestHandler):
                     ]
 
                 if "source_ip" in query:
-
                     source_ip = query["source_ip"][0]
 
                     alerts = [
@@ -333,7 +505,6 @@ class RequestHandler(BaseHTTPRequestHandler):
             elif path == "/statistics":
 
                 if query:
-
                     self.send_json_response(
                         400,
                         {
@@ -341,7 +512,6 @@ class RequestHandler(BaseHTTPRequestHandler):
                             "Query parameters are not supported for /statistics"
                         }
                     )
-
                     return
 
                 alerts = storage_manager.load_alerts()
@@ -359,7 +529,6 @@ class RequestHandler(BaseHTTPRequestHandler):
                 )
 
             else:
-
                 self.send_json_response(
                     404,
                     {
@@ -368,7 +537,6 @@ class RequestHandler(BaseHTTPRequestHandler):
                 )
 
         except Exception:
-
             self.send_json_response(
                 500,
                 {
@@ -397,11 +565,9 @@ if __name__ == "__main__":
     print("Press Ctrl+C to stop.")
 
     try:
-
         server.serve_forever()
 
     except KeyboardInterrupt:
-
         print("\nHTTP server stopped.")
 
         server.server_close()

@@ -88,9 +88,10 @@ Detector   Detector    Detector   Detector
 - Phase 12B — ICMP Sweep Detection (`icmp_sweep_detector.py` / `IcmpSweepDetector` detecting ICMP host discovery)
 - Phase 13.1 — Application Entry Point / Capture Pipeline (`main.py` standalone production application launcher)
 - Phase 14.1 — Web Monitoring Dashboard (`http_server.py` browser-accessible monitoring dashboard)
+- Phase 14.2 — Auto-Refreshing Dashboard (`http_server.py` 3-second auto-refreshing dashboard via vanilla JS polling)
 
 ### In Progress
-- None (Phase 14.1 complete)
+- None (Phase 14.2 complete)
 
 ### Not Yet Implemented
 - None
@@ -1485,6 +1486,67 @@ Verified in the browser that the monitoring dashboard successfully displayed usi
 
 ### Final Status
 - **Phase 14.1 — Web Monitoring Dashboard**: COMPLETE
+
+---
+
+## 2026-10-09 — Auto-Refreshing Dashboard (Phase 14.2)
+
+### Objective
+Automatically refresh the web monitoring dashboard content dynamically in the browser without requiring a manual page reload.
+
+### Implementation
+- Added vanilla browser-side JavaScript inside `http_server.py`'s `generate_dashboard()` HTML template script tag.
+- Configured a 3-second polling refresh interval (`setInterval(refreshDashboard, 3000)`).
+- Performs asynchronous non-cached HTTP requests to `/statistics` and `/alerts` using `Promise.all` with `{ cache: "no-store" }`.
+- Dynamically updates key metric cards: Total Alerts (`#total-alerts`), Top Source (`#top-source`), and Top Alert Type (`#top-alert-type`).
+- Re-renders the Alerts by Type table (`#alerts-by-type`) using safe DOM methods (`replaceChildren()`, `createElement()`, `textContent`).
+- Re-renders the Recent Alerts table (`#recent-alerts`) showing the 10 most recent alerts in reverse chronological order.
+- Displays connection status and timestamp in `#dashboard-status` (`Connected — last updated <time>`).
+- Implemented robust error handling: on network or API request failure, updates status banner to `Connection error — retrying` and retries on the next 3-second interval without throwing uncaught exceptions.
+- Uses native vanilla JavaScript (DOM manipulation and modern `fetch` API) and existing RESTful HTTP API endpoints (`GET /statistics` and `GET /alerts`).
+- Introduces zero external frontend dependencies, libraries, or build toolchains.
+
+### Architecture
+```
+main.py captures live packets & saves accepted alerts to alerts.json
+                          ↓
+http_server.py reads persisted alerts via StorageManager & StatisticsManager
+                          ↓
+http_server.py exposes RESTful JSON endpoints /alerts and /statistics
+                          ↓
+Browser periodically polls /statistics and /alerts (every 3 seconds)
+                          ↓
+Browser JavaScript dynamically updates DOM elements & status banner
+```
+
+### Verification & Testing
+- `py_compile http_server.py` passed with zero syntax or syntax-related errors.
+- HTTP API test suite (`test_http_server.py`): 8/8 test cases passed cleanly.
+- Full regression test suite:
+  ```bash
+  .venv/bin/python -m unittest discover
+  ```
+  Result:
+  ```text
+  Ran 45 tests in 0.523s
+  OK
+  ```
+- User visually verified that the monitoring dashboard updates automatically in real-time as new alerts are logged.
+
+### Limitations
+- **Periodic Polling**: Refresh mechanism operates via 3-second interval polling rather than push-based WebSockets or Server-Sent Events (SSE).
+- **Update Latency**: Update latency is approximately equal to the 3-second polling interval plus network/JSON processing overhead.
+- **Capture Dependency**: The live packet capture process (`main.py`) must be actively running and persisting alerts to `alerts.json` for new alerts to populate the dashboard.
+- **Authentication**: Existing authentication limitations remain unchanged (public HTTP access without authentication headers).
+
+### Files
+- `http_server.py` modified (added vanilla JS auto-refresh script, HTML IDs, and status banner)
+- `DEVELOPMENT_NOTES.md` modified (updated project status and added Phase 14.2 entry)
+- `alerts.json` modified (appended test alert records during test suite execution)
+
+### Final Status
+- **Phase 14.2 — Auto-Refreshing Dashboard**: COMPLETE
+
 
 
 
